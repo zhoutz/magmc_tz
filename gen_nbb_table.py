@@ -4,7 +4,7 @@ from scipy.integrate import quad
 y_min = -4.0
 y_max = 1.5
 num_points = 551
-output_path = "tz/table/nbb_table.txt"
+output_path = "table/nbb_table.txt"
 
 
 def integrand(x):
