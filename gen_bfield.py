@@ -170,7 +170,11 @@ def solve_twisted_dipole(
 
 if __name__ == "__main__":
     target_delta_phi = 1.0  # radians
-    mu_grid = np.linspace(0.0, 1.0, 1001)
+    mu_min = 0.0
+    mu_max = 1.0
+    mu_num = 1001
+
+    mu_grid = np.linspace(mu_min, mu_max, mu_num)
     output_path = f"table/bfield_t{int(target_delta_phi * 10):02d}.txt"
 
     out = solve_twisted_dipole(
@@ -189,7 +193,9 @@ if __name__ == "__main__":
 
     with open(output_path, "w") as f:
         n = len(out["mu"])
-        f.write(f"{target_delta_phi} {out['p']} {out['A']} {out['C']} {n}\n")
+        f.write(
+            f"{target_delta_phi} {out['p']} {out['A']} {out['C']} {mu_min} {mu_max} {mu_num}\n"
+        )
         for i in range(n):
-            f.write(f"{out['mu'][i]:.16e} {out['f'][i]:.16e} {out['fp'][i]:.16e}\n")
+            f.write(f"{out['f'][i]:.16e} {out['fp'][i]:.16e}\n")
     print(f"Table saved to {output_path}")
