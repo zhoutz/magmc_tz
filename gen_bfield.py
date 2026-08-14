@@ -32,6 +32,10 @@ def solve_twisted_dipole(
         Number of continuation steps in delta_phi.
     tol : float
         solve_bvp tolerance.
+    max_nodes : int
+        Maximum number of nodes for solve_bvp.
+    verbose : bool
+        Print progress information.
 
     Return
     ------
@@ -196,6 +200,5 @@ if __name__ == "__main__":
         f.write(
             f"{target_delta_phi} {out['p']} {out['A']} {out['C']} {mu_min} {mu_max} {mu_num}\n"
         )
-        for i in range(n):
-            f.write(f"{out['f'][i]:.16e} {out['fp'][i]:.16e}\n")
+        f.writelines(f"{out['f'][i]:.16e} {out['fp'][i]:.16e}\n" for i in range(n))
     print(f"Table saved to {output_path}")
