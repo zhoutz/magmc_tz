@@ -76,7 +76,7 @@ template <int N, class D> struct StepperDopr5 {
     h_old = h_new;
   }
 
-  double error() {
+  double error() const {
     double err = 0.0;
     for (int i = 0; i < N; i++) {
       double sk = atol + rtol * std::max(std::abs(y_old[i]), std::abs(y_new[i]));
@@ -115,7 +115,7 @@ template <int N, class D> struct StepperDopr5 {
     }
   }
 
-  YVector interp_y0_at(double y0_target) {
+  YVector interp_y0_at(double y0_target) const {
     if (!(dydx_old[0] > 0.0) || !std::isfinite(dydx_old[0]) || !(dydx_new[0] > 0.0) ||
         !std::isfinite(dydx_new[0])) {
       throw std::runtime_error("interp_y0_at requires finite positive dy0/dx at both endpoints");
