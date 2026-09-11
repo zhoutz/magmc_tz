@@ -19,7 +19,7 @@ void derivs(double x, YVector y, YVector &dydx) {
 int main() {
   double x_init = 0.0;
   double h_init = 0.1;
-  YVector y_init = {10.0, 0.0, M_PI / 4};
+  YVector y_init = {2.0, 0.0, M_PI / 2};
   YVector dydx_init;
   derivs(x_init, y_init, dydx_init);
   double atol = 1e-6;
@@ -31,7 +31,8 @@ int main() {
     stepper.do_step();
     stepper.update_old();
     auto [r, phi, alpha] = stepper.y_new;
-    std::print("Step {}: r = {}, phi = {}, alpha = {}\n", i + 1, r, phi, alpha);
+    // std::print("Step {}: r = {}, phi = {}, alpha = {}\n", i + 1, r, phi, alpha);
+    std::println("{} {}", r, phi);
   }
 
   return 0;
