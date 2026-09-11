@@ -11,18 +11,18 @@ template <int N, class D> struct StepperDopr5 {
   static constexpr double EPS = std::numeric_limits<double>::epsilon();
 
   D &derivs;
-  double x_old, h;
+  double x_old, h_old, h_new;
   YVector y_old, y_new, y_err;
   YVector dydx_old, dydx_new;
   double atol, rtol;
 
   StepperDopr5(D &derivs, double x_init, double h_init, YVector y_init, YVector dydx_init,
                double atol, double rtol)
-      : derivs(derivs), x_old(x_init), h(h_init), y_old(y_init), dydx_old(dydx_init), atol(atol),
-        rtol(rtol) {}
+      : derivs(derivs), x_old(x_init), h_old(h_init), y_old(y_init), dydx_old(dydx_init),
+        atol(atol), rtol(rtol) {}
 
-  static void try_step(D &derivs, double x_old, YVector const &y_old, YVector const &dydx_old,
-                       double h, YVector &y_new, YVector &dydx_new, YVector &y_err) {
+  static void try_step(D &derivs, double x_old, double h, YVector const &y_old,
+                       YVector const &dydx_old, YVector &y_new, YVector &dydx_new, YVector &y_err) {
     constexpr double c2 = 0.2, c3 = 0.3, c4 = 0.8, c5 = 8.0 / 9.0, a21 = 0.2, a31 = 3.0 / 40.0,
                      a32 = 9.0 / 40.0, a41 = 44.0 / 45.0, a42 = -56.0 / 15.0, a43 = 32.0 / 9.0,
                      a51 = 19372.0 / 6561.0, a52 = -25360.0 / 2187.0, a53 = 64448.0 / 6561.0,
@@ -60,16 +60,20 @@ template <int N, class D> struct StepperDopr5 {
     }
   }
 
-  void step() {
+  void do_step() {
     while (true) {
-      try_step(derivs, x_old, y_old, dydx_old, h, y_new, dydx_new, y_err);
+      try_step(derivs, x_old, h_old, y_old, dydx_old, y_new, dydx_new, y_err);
       if (success(error())) break;
-      if (std::abs(h) <= std::abs(x_old) * EPS)
+      if (std::abs(h_old) <= std::abs(x_old) * EPS)
         throw std::runtime_error("stepsize underflow in StepperDopr5");
     }
+  }
+
+  void update_old() {
     dydx_old = dydx_new;
     y_old = y_new;
-    x_old += h;
+    x_old += h_old;
+    h_old = h_new;
   }
 
   double error() {
@@ -97,15 +101,15 @@ template <int N, class D> struct StepperDopr5 {
         if (scale > maxscale) scale = maxscale;
       }
       if (reject)
-        h *= std::min(scale, 1.0);
+        h_new = h_old * std::min(scale, 1.0);
       else
-        h *= scale;
+        h_new = h_old * scale;
       errold = std::max(err, 1.0e-4);
       reject = false;
       return true;
     } else {
       scale = std::max(safe * std::pow(err, -alpha), minscale);
-      h *= scale;
+      h_old *= scale;
       reject = true;
       return false;
     }
