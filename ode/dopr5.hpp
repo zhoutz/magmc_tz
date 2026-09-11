@@ -114,4 +114,34 @@ template <int N, class D> struct StepperDopr5 {
       return false;
     }
   }
+
+  YVector interp_y0_at(double y0_target) {
+    if (!(dydx_old[0] > 0.0) || !std::isfinite(dydx_old[0]) || !(dydx_new[0] > 0.0) ||
+        !std::isfinite(dydx_new[0])) {
+      throw std::runtime_error("interp_y0_at requires finite positive dy0/dx at both endpoints");
+      // return y_new;
+    }
+
+    const double du = y_new[0] - y_old[0];
+    const double t = (y0_target - y_old[0]) / du;
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+
+    const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    const double h10 = t3 - 2.0 * t2 + t;
+    const double h01 = -2.0 * t3 + 3.0 * t2;
+    const double h11 = t3 - t2;
+
+    YVector y;
+    y[0] = y0_target;
+
+    for (int i = 1; i < N; i++) {
+      const double slope_old = dydx_old[i] / dydx_old[0];
+      const double slope_new = dydx_new[i] / dydx_new[0];
+
+      y[i] = h00 * y_old[i] + h10 * du * slope_old + h01 * y_new[i] + h11 * du * slope_new;
+    }
+
+    return y;
+  }
 };
