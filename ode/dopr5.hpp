@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 
 template <int N, class D> struct StepperDopr5 {
