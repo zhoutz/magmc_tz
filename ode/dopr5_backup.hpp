@@ -16,15 +16,13 @@ template <int N, class D> struct StepperDopr5 {
   YVector dydx_old, dydx_new;
   double atol, rtol;
 
-  YVector k2, k3, k4, k5, k6;
-  YVector rcont1, rcont2, rcont3, rcont4, rcont5;
-
   StepperDopr5(D &derivs, double x_init, double h_init, YVector y_init, YVector dydx_init,
                double atol, double rtol)
       : derivs(derivs), x_old(x_init), h_old(h_init), y_old(y_init), dydx_old(dydx_init),
         atol(atol), rtol(rtol) {}
 
-  void try_step() {
+  static void try_step(D &derivs, double x_old, double h, YVector const &y_old,
+                       YVector const &dydx_old, YVector &y_new, YVector &dydx_new, YVector &y_err) {
     constexpr double c2 = 0.2, c3 = 0.3, c4 = 0.8, c5 = 8.0 / 9.0, a21 = 0.2, a31 = 3.0 / 40.0,
                      a32 = 9.0 / 40.0, a41 = 44.0 / 45.0, a42 = -56.0 / 15.0, a43 = 32.0 / 9.0,
                      a51 = 19372.0 / 6561.0, a52 = -25360.0 / 2187.0, a53 = 64448.0 / 6561.0,
@@ -34,37 +32,37 @@ template <int N, class D> struct StepperDopr5 {
                      a75 = -2187.0 / 6784.0, a76 = 11.0 / 84.0, e1 = 71.0 / 57600.0,
                      e3 = -71.0 / 16695.0, e4 = 71.0 / 1920.0, e5 = -17253.0 / 339200.0,
                      e6 = 22.0 / 525.0, e7 = -1.0 / 40.0;
-    YVector y_tmp;
+    YVector y_tmp, k2, k3, k4, k5, k6;
     for (int i = 0; i < N; i++)
-      y_tmp[i] = y_old[i] + h_old * a21 * dydx_old[i];
-    derivs(x_old + c2 * h_old, y_tmp, k2);
+      y_tmp[i] = y_old[i] + h * a21 * dydx_old[i];
+    derivs(x_old + c2 * h, y_tmp, k2);
     for (int i = 0; i < N; i++)
-      y_tmp[i] = y_old[i] + h_old * (a31 * dydx_old[i] + a32 * k2[i]);
-    derivs(x_old + c3 * h_old, y_tmp, k3);
+      y_tmp[i] = y_old[i] + h * (a31 * dydx_old[i] + a32 * k2[i]);
+    derivs(x_old + c3 * h, y_tmp, k3);
     for (int i = 0; i < N; i++)
-      y_tmp[i] = y_old[i] + h_old * (a41 * dydx_old[i] + a42 * k2[i] + a43 * k3[i]);
-    derivs(x_old + c4 * h_old, y_tmp, k4);
+      y_tmp[i] = y_old[i] + h * (a41 * dydx_old[i] + a42 * k2[i] + a43 * k3[i]);
+    derivs(x_old + c4 * h, y_tmp, k4);
     for (int i = 0; i < N; i++)
-      y_tmp[i] = y_old[i] + h_old * (a51 * dydx_old[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
-    derivs(x_old + c5 * h_old, y_tmp, k5);
+      y_tmp[i] = y_old[i] + h * (a51 * dydx_old[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
+    derivs(x_old + c5 * h, y_tmp, k5);
     for (int i = 0; i < N; i++)
-      y_tmp[i] = y_old[i] + h_old * (a61 * dydx_old[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] +
-                                     a65 * k5[i]);
-    double x_new = x_old + h_old;
+      y_tmp[i] = y_old[i] +
+                 h * (a61 * dydx_old[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
+    double x_new = x_old + h;
     derivs(x_new, y_tmp, k6);
     for (int i = 0; i < N; i++)
-      y_new[i] = y_old[i] + h_old * (a71 * dydx_old[i] + a73 * k3[i] + a74 * k4[i] + a75 * k5[i] +
-                                     a76 * k6[i]);
+      y_new[i] = y_old[i] +
+                 h * (a71 * dydx_old[i] + a73 * k3[i] + a74 * k4[i] + a75 * k5[i] + a76 * k6[i]);
     derivs(x_new, y_new, dydx_new);
     for (int i = 0; i < N; i++) {
-      y_err[i] = h_old * (e1 * dydx_old[i] + e3 * k3[i] + e4 * k4[i] + e5 * k5[i] + e6 * k6[i] +
-                          e7 * dydx_new[i]);
+      y_err[i] = h * (e1 * dydx_old[i] + e3 * k3[i] + e4 * k4[i] + e5 * k5[i] + e6 * k6[i] +
+                      e7 * dydx_new[i]);
     }
   }
 
   void do_step() {
     while (true) {
-      try_step();
+      try_step(derivs, x_old, h_old, y_old, dydx_old, y_new, dydx_new, y_err);
       if (success(error())) break;
       if (std::abs(h_old) <= std::abs(x_old) * EPS)
         throw std::runtime_error("stepsize underflow in StepperDopr5");
@@ -117,26 +115,33 @@ template <int N, class D> struct StepperDopr5 {
     }
   }
 
-  void prepare_dense() {
-    constexpr double d1 = -12715105075.0 / 11282082432.0, d3 = 87487479700.0 / 32700410799.0,
-                     d4 = -10690763975.0 / 1880347072.0, d5 = 701980252875.0 / 199316789632.0,
-                     d6 = -1453857185.0 / 822651844.0, d7 = 69997945.0 / 29380423.0;
-    for (int i = 0; i < N; i++) {
-      rcont1[i] = y_old[i];
-      double ydiff = y_new[i] - y_old[i];
-      rcont2[i] = ydiff;
-      double bspl = h_old * dydx_old[i] - ydiff;
-      rcont3[i] = bspl;
-      rcont4[i] = ydiff - h_old * dydx_new[i] - bspl;
-      rcont5[i] = h_old * (d1 * dydx_old[i] + d3 * k3[i] + d4 * k4[i] + d5 * k5[i] + d6 * k6[i] +
-                           d7 * dydx_new[i]);
+  YVector interp_y0_at(double y0_target) const {
+    if (!(dydx_old[0] > 0.0) || !std::isfinite(dydx_old[0]) || !(dydx_new[0] > 0.0) ||
+        !std::isfinite(dydx_new[0])) {
+      throw std::runtime_error("interp_y0_at requires finite positive dy0/dx at both endpoints");
+      // return y_new;
     }
-  }
 
-  void dense_out(double x, YVector &ret) const {
-    double s = (x - x_old) / h_old;
-    double s1 = 1.0 - s;
-    for (int i = 0; i < N; i++)
-      ret[i] = rcont1[i] + s * (rcont2[i] + s1 * (rcont3[i] + s * (rcont4[i] + s1 * rcont5[i])));
+    const double du = y_new[0] - y_old[0];
+    const double t = (y0_target - y_old[0]) / du;
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+
+    const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    const double h10 = t3 - 2.0 * t2 + t;
+    const double h01 = -2.0 * t3 + 3.0 * t2;
+    const double h11 = t3 - t2;
+
+    YVector y;
+    y[0] = y0_target;
+
+    for (int i = 1; i < N; i++) {
+      const double slope_old = dydx_old[i] / dydx_old[0];
+      const double slope_new = dydx_new[i] / dydx_new[0];
+
+      y[i] = h00 * y_old[i] + h10 * du * slope_old + h01 * y_new[i] + h11 * du * slope_new;
+    }
+
+    return y;
   }
 };
