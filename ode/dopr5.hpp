@@ -133,10 +133,12 @@ template <int N, class D> struct StepperDopr5 {
     }
   }
 
-  void dense_out(double x, YVector &ret) const {
+  YVector dense_out(double x) const {
+    YVector ret;
     double s = (x - x_old) / h_old;
     double s1 = 1.0 - s;
     for (int i = 0; i < N; i++)
       ret[i] = rcont1[i] + s * (rcont2[i] + s1 * (rcont3[i] + s * (rcont4[i] + s1 * rcont5[i])));
+    return ret;
   }
 };
