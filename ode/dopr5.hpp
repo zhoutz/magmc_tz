@@ -3,14 +3,16 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+// #include <functional>
 #include <limits>
 #include <stdexcept>
 
-template <int N, class D> struct StepperDopr5 {
+template <int N> struct StepperDopr5 {
   using YVector = std::array<double, N>;
+  using Func = void (*)(double, YVector const &, YVector &);
   static constexpr double EPS = std::numeric_limits<double>::epsilon();
 
-  D &derivs;
+  Func derivs;
   double x_old, h_old, h_new;
   YVector y_old, y_new, y_err;
   YVector dydx_old, dydx_new;
@@ -19,10 +21,19 @@ template <int N, class D> struct StepperDopr5 {
   YVector k2, k3, k4, k5, k6;
   YVector rcont1, rcont2, rcont3, rcont4, rcont5;
 
-  StepperDopr5(D &derivs, double x_init, double h_init, YVector y_init, YVector dydx_init,
-               double atol, double rtol)
-      : derivs(derivs), x_old(x_init), h_old(h_init), y_old(y_init), dydx_old(dydx_init),
-        atol(atol), rtol(rtol) {}
+  double errold;
+  bool reject;
+
+  StepperDopr5(Func derivs, double atol, double rtol) : derivs(derivs), atol(atol), rtol(rtol) {}
+
+  void init(double x_init, double h_init, YVector const &y_init) {
+    x_old = x_init;
+    h_old = h_init;
+    y_old = y_init;
+    derivs(x_old, y_old, dydx_old);
+    errold = 1.0e-4;
+    reject = false;
+  }
 
   void try_step() {
     constexpr double c2 = 0.2, c3 = 0.3, c4 = 0.8, c5 = 8.0 / 9.0, a21 = 0.2, a31 = 3.0 / 40.0,
@@ -86,9 +97,6 @@ template <int N, class D> struct StepperDopr5 {
     }
     return std::sqrt(err / N);
   }
-
-  double errold = 1.0e-4;
-  bool reject = false;
 
   bool success(double err) {
     constexpr double beta = 0.4 / 5.0, alpha = 0.2 - beta * 0.75, safe = 0.9, minscale = 0.2,
