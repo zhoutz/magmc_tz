@@ -198,7 +198,6 @@ template <int N> struct StepperDopr5 {
                   return h_old > 0.0 ? a.second < b.second : a.second > b.second;
                 });
 
-      double event_id = active_events.front().first;
       double event_x = active_events.front().second;
       y_new = dense_out(event_x);
       derivs(event_x, y_new, dydx_new);
