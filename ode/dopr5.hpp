@@ -1,17 +1,22 @@
 #pragma once
 
+#include "roots.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 template <int N> struct StepperDopr5 {
-  using YVector = std::array<double, N>;
-  using Func = void (*)(double, YVector const &, YVector &);
   static constexpr double EPS = std::numeric_limits<double>::epsilon();
+  using YVector = std::array<double, N>;
+  using DerivFunc = void (*)(double, YVector const &, YVector &);
+  using EventFunc = double (*)(double, YVector const &);
 
-  Func derivs;
+  DerivFunc derivs;
   double x_old, h_old, h_new;
   YVector y_old, y_new, y_err;
   YVector dydx_old, dydx_new;
@@ -23,7 +28,18 @@ template <int N> struct StepperDopr5 {
   double errold;
   bool reject;
 
-  StepperDopr5(Func derivs, double atol, double rtol) : derivs(derivs), atol(atol), rtol(rtol) {}
+  int event_count;
+  std::vector<EventFunc> event_funcs;
+  std::vector<int> event_signs;
+
+  StepperDopr5(DerivFunc derivs, double atol, double rtol)
+      : derivs(derivs), atol(atol), rtol(rtol) {}
+
+  void add_event(EventFunc event_func) {
+    ++event_count;
+    event_funcs.push_back(event_func);
+    event_signs.push_back(0);
+  }
 
   void init(double x_init, double h_init, YVector const &y_init) {
     x_old = x_init;
@@ -32,6 +48,10 @@ template <int N> struct StepperDopr5 {
     derivs(x_old, y_old, dydx_old);
     errold = 1.0e-4;
     reject = false;
+    for (int i = 0; i < event_count; ++i) {
+      double event_value = event_funcs[i](x_old, y_old);
+      event_signs[i] = (event_value > 0) - (event_value < 0);
+    }
   }
 
   void try_step() {
@@ -147,5 +167,47 @@ template <int N> struct StepperDopr5 {
     for (int i = 0; i < N; i++)
       ret[i] = rcont1[i] + s * (rcont2[i] + s1 * (rcont3[i] + s * (rcont4[i] + s1 * rcont5[i])));
     return ret;
+  }
+
+  bool detect_event() {
+    // return true if ODE system should terminate due to an event occur
+    std::vector<std::pair<int, double>> active_events;
+    active_events.reserve(event_count);
+    double x_new = x_old + h_old;
+    for (int i = 0; i < event_count; ++i) {
+      double event_value = event_funcs[i](x_new, y_new);
+      int event_sign_new = (event_value > 0) - (event_value < 0);
+      if (event_sign_new * event_signs[i] < 0) {
+        active_events.push_back(std::make_pair(i, 0.0));
+      }
+    }
+    if (!active_events.empty()) {
+      prepare_dense();
+      for (auto &event : active_events) {
+        event.second = zriddr([&](double x) { return event_funcs[event.first](x, dense_out(x)); },
+                              x_old, x_new, 4 * EPS * (std::abs(x_old) + 1));
+      }
+      std::sort(active_events.begin(), active_events.end(),
+                [](std::pair<int, double> const &a, std::pair<int, double> const &b) {
+                  return a.second < b.second;
+                });
+      int event_id = active_events.front().first;
+      double event_x = active_events.front().second;
+      h_old = event_x - x_old;
+      y_new = dense_out(event_x);
+      derivs(event_x, y_new, dydx_new);
+
+      for (int i = 0; i < event_count; ++i) {
+        if (i == event_id) {
+          event_signs[i] = 0;
+        } else {
+          double event_value = event_funcs[i](event_x, y_new);
+          event_signs[i] = (event_value > 0) - (event_value < 0);
+        }
+      }
+
+      return true;
+    }
+    return false;
   }
 };
