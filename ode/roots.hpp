@@ -3,7 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 
-template <class T> double zriddr(T &func, double x1, double x2, double xacc) {
+template <class T> double zriddr(T const &func, double x1, double x2, double xacc) {
   constexpr int MAXIT = 60;
   double fl = func(x1);
   double fh = func(x2);
