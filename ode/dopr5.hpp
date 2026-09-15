@@ -177,7 +177,6 @@ template <int N> struct StepperDopr5 {
     std::vector<std::pair<int, double>> active_events;
     active_events.reserve(event_count);
     double x_new = x_old + h_old;
-    double x_tol = 4 * EPS * (1.0 + std::abs(x_old));
     for (int i = 0; i < event_count; ++i) {
       double event_value = event_funcs[i](x_new, y_new);
       int event_sign_new = sign(event_value);
@@ -189,25 +188,30 @@ template <int N> struct StepperDopr5 {
 
     if (!active_events.empty()) {
       prepare_dense();
+      double x_tol = 4 * EPS * (1.0 + std::abs(x_old));
       for (auto &event : active_events) {
         event.second = zriddr([&](double x) { return event_funcs[event.first](x, dense_out(x)); },
                               x_old, x_new, x_tol);
       }
       std::sort(active_events.begin(), active_events.end(),
                 [&](std::pair<int, double> const &a, std::pair<int, double> const &b) {
-                  if (a.second == b.second) return a.first < b.first;
                   return h_old > 0.0 ? a.second < b.second : a.second > b.second;
                 });
+
       double event_id = active_events.front().first;
       double event_x = active_events.front().second;
       y_new = dense_out(event_x);
       derivs(event_x, y_new, dydx_new);
       h_old = event_x - x_old;
 
+      for (auto const &event : active_events) {
+        if (std::abs(event.second - event_x) < x_tol) {
+          event_signs[event.first] = 0;
+        }
+      }
+
       for (int i = 0; i < event_count; ++i) {
-        if (i == event_id) {
-          event_signs[i] = 0;
-        } else {
+        if (event_signs[i] != 0) {
           event_signs[i] = sign(event_funcs[i](event_x, y_new));
         }
       }
