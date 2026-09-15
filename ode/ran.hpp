@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cmath>
-#include <tuple>
+// #include <tuple>
 
 #include "doubles.hpp"
 
@@ -71,13 +71,13 @@ struct Ran {
 #endif
   }
 
-  auto isotropic_2d() {
-    double x1, x2, r2;
-    do {
-      x1 = U(-1.0, 1.0);
-      x2 = U(-1.0, 1.0);
-      r2 = x1 * x1 + x2 * x2;
-    } while (r2 >= 1.0);
-    return std::make_tuple((x1 * x1 - x2 * x2) / r2, 2 * x1 * x2 / r2);
-  }
+  // auto isotropic_2d() {
+  //   double x1, x2, r2;
+  //   do {
+  //     x1 = U(-1.0, 1.0);
+  //     x2 = U(-1.0, 1.0);
+  //     r2 = x1 * x1 + x2 * x2;
+  //   } while (r2 >= 1.0);
+  //   return std::make_tuple((x1 * x1 - x2 * x2) / r2, 2 * x1 * x2 / r2);
+  // }
 };

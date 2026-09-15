@@ -1,58 +1,58 @@
-#pragma once
-
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <utility>
 
-inline std::pair<double, double> solve_quadratic_real(double a, double b, double c) noexcept {
-  const double nan = std::numeric_limits<double>::quiet_NaN();
+inline bool solve_quadratic(double a, double b, double c, double &x1, double &x2) noexcept {
+  constexpr double nan = std::numeric_limits<double>::quiet_NaN();
 
-  auto no_real_roots = [nan]() noexcept { return std::pair<double, double>{nan, nan}; };
+  auto fail = [&]() noexcept {
+    x1 = nan;
+    x2 = nan;
+    return false;
+  };
 
   if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
-    return no_real_roots();
+    return fail();
   }
 
   if (a == 0.0) {
-    if (b == 0.0) {
-      return no_real_roots();
-    }
-
-    double x = -c / b;
-    return {x, x};
+    return fail();
   }
 
   const double scale = std::max({std::abs(a), std::abs(b), std::abs(c)});
-
-  using real = long double;
-
-  const real A = static_cast<real>(a) / scale;
-  const real B = static_cast<real>(b) / scale;
-  const real C = static_cast<real>(c) / scale;
-
-  const real D = std::fma(-4.0L * A, C, B * B);
-
-  if (D < 0.0L) {
-    return no_real_roots();
+  if (scale == 0.0 || !std::isfinite(scale)) {
+    return fail();
   }
 
-  if (D == 0.0L) {
-    double x = static_cast<double>(-B / (2.0L * A));
-    return {x, x};
+  double A = a / scale;
+  double B = b / scale;
+  double C = c / scale;
+
+  const double D = std::fma(-4.0 * A, C, B * B);
+
+  if (!(D > 0.0)) {
+    return fail();
   }
 
-  const real sqrtD = std::sqrt(D);
-  const real q = -0.5L * (B + std::copysign(sqrtD, B));
-  real x1 = q / A;
-  real x2 = C / q;
+  const double sqrtD = std::sqrt(D);
+  const double q = -0.5 * (B + std::copysign(sqrtD, B));
 
-  double r1 = static_cast<double>(x1);
-  double r2 = static_cast<double>(x2);
+  if (q == 0.0 || !std::isfinite(q)) {
+    return fail();
+  }
+
+  double r1 = q / A;
+  double r2 = C / q;
+
+  if (!std::isfinite(r1) || !std::isfinite(r2)) {
+    return fail();
+  }
 
   if (r2 < r1) {
     std::swap(r1, r2);
   }
 
-  return {r1, r2};
+  x1 = r1;
+  x2 = r2;
+  return true;
 }
