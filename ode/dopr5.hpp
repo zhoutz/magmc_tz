@@ -173,7 +173,7 @@ template <int N> struct StepperDopr5 {
     return ret;
   }
 
-  bool detect_event() {
+  int detect_event() {
     std::vector<std::pair<int, double>> active_events;
     active_events.reserve(event_count);
     double x_new = x_old + h_old;
@@ -215,8 +215,8 @@ template <int N> struct StepperDopr5 {
         }
       }
 
-      return true;
+      return active_events.front().first;
     }
-    return false;
+    return -1;
   }
 };

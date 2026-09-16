@@ -49,21 +49,22 @@ int main() {
 
   while (true) {
     stepper.do_step();
-    if (stepper.detect_event()) {
+    int event_id = stepper.detect_event();
+    if (event_id != -1) {
       double r = stepper.y_new[0];
       double psi = stepper.y_new[1];
       double alpha = stepper.y_new[2];
       double tau = stepper.y_new[3];
 
-      if (std::abs(r - 1000 * R_star) < 1e-6) {
+      if (event_id == 0) {
         std::println("Photon escaped at r = {}, psi = {}, alpha = {}, tau = {}", r, psi, alpha,
                      tau);
         break;
-      } else if (std::abs(r - R_star) < 1e-6) {
+      } else if (event_id == 1) {
         std::println("Photon absorbed at r = {}, psi = {}, alpha = {}, tau = {}", r, psi, alpha,
                      tau);
         break;
-      } else if (std::abs(tau) < 1e-6) {
+      } else if (event_id == 2) {
         std::println("Photon scattered at r = {}, psi = {}, alpha = {}, tau = {}", r, psi, alpha,
                      tau);
         break;
