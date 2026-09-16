@@ -1,5 +1,6 @@
 #include "bfield.hpp"
 #include "constants.hpp"
+#include "distribution.hpp"
 #include "dopr5.hpp"
 #include "init.hpp"
 #include "ran.hpp"
@@ -13,15 +14,22 @@ constexpr double B_pole = 1e14;                                   // G
 
 using YVector = std::array<double, 4>;
 
-void derivs(double x, YVector const &y, YVector &dydx) {
-  auto [r, psi, alpha, tau] = y;
-  double f = std::sqrt(1 - rs / r);
+struct PhotonEvolution {
+  BField const &bfield;
+  Boltzmann const &fb;
+  Photon photon;
+  Ran &ran;
 
-  dydx[0] = f * std::cos(alpha);
-  dydx[1] = std::sin(alpha) / r;
-  dydx[2] = -std::sin(alpha) / (r * f) * (1 - 3 * rs / (2 * r));
-  dydx[3] = 0; // Assuming tau is constant or not evolving
-}
+  void operator()(double x, YVector const &y, YVector &dydx) const {
+    auto [r, psi, alpha, tau] = y;
+    double f = std::sqrt(1 - rs / r);
+
+    dydx[0] = f * std::cos(alpha);
+    dydx[1] = std::sin(alpha) / r;
+    dydx[2] = -std::sin(alpha) / (r * f) * (1 - 3 * rs / (2 * r));
+    dydx[3] = 0; // Assuming tau is constant or not evolving
+  }
+};
 
 double event_escape(double x, YVector const &y) {
   double r = y[0];
@@ -38,12 +46,15 @@ double event_scattering(double x, YVector const &y) {
   return tau;
 }
 
+BField bfield("table/bfield_t10.txt", B_pole, R_star);
+Boltzmann fb(-0.75);
+
 int main() {
   Ran ran(1234);
-  BField bfield("table/bfield_t10.txt", B_pole, R_star);
   Photon photon = init07(ran, R_star, Polarization::O);
 
-  StepperDopr5<4> stepper(&derivs, 1e-6, 1e-6);
+  StepperDopr5<4, PhotonEvolution> stepper(
+      PhotonEvolution{.bfield = bfield, .fb = fb, .photon = photon, .ran = ran}, 1e-6, 1e-6);
   stepper.add_event(&event_escape);
   stepper.add_event(&event_absorption);
   stepper.add_event(&event_scattering);

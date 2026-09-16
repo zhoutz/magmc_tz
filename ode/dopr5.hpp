@@ -10,14 +10,14 @@
 #include <utility>
 #include <vector>
 
-template <int N> struct StepperDopr5 {
+template <int N, class DerivFunc> struct StepperDopr5 {
   static_assert(N > 0, "StepperDopr5 requires at least one state variable");
   static constexpr double EPS = std::numeric_limits<double>::epsilon();
   using YVector = std::array<double, N>;
-  using DerivFunc = void (*)(double, YVector const &, YVector &);
+  // using DerivFunc = void (*)(double, YVector const &, YVector &);
   using EventFunc = double (*)(double, YVector const &);
 
-  DerivFunc derivs;
+  DerivFunc const &derivs;
   double x_old, h_old, h_new;
   YVector y_old, y_new, y_err;
   YVector dydx_old, dydx_new;
@@ -33,7 +33,7 @@ template <int N> struct StepperDopr5 {
   std::vector<EventFunc> event_funcs;
   std::vector<int> event_signs;
 
-  StepperDopr5(DerivFunc derivs, double atol, double rtol)
+  StepperDopr5(DerivFunc const &derivs, double atol, double rtol)
       : derivs(derivs), atol(atol), rtol(rtol) {}
 
   static int sign(double value) { return (value > 0.0) - (value < 0.0); }
