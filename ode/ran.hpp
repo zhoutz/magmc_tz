@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cmath>
-// #include <tuple>
 
 #include "doubles.hpp"
 
@@ -51,7 +50,7 @@ struct Ran {
 
   double N(double mean, double std) { return mean + std * N(); }
 
-  double3 isotropic_3d() {
+  double3 point_on_unit_sphere() {
 #if 1
     double x1, x2, r2;
     do {
@@ -71,13 +70,32 @@ struct Ran {
 #endif
   }
 
-  // auto isotropic_2d() {
-  //   double x1, x2, r2;
-  //   do {
-  //     x1 = U(-1.0, 1.0);
-  //     x2 = U(-1.0, 1.0);
-  //     r2 = x1 * x1 + x2 * x2;
-  //   } while (r2 >= 1.0);
-  //   return std::make_tuple((x1 * x1 - x2 * x2) / r2, 2 * x1 * x2 / r2);
-  // }
+  void point_on_unit_circle(double &x, double &y) {
+    double x1, x2, r2;
+    do {
+      x1 = U(-1.0, 1.0);
+      x2 = U(-1.0, 1.0);
+      r2 = x1 * x1 + x2 * x2;
+    } while (r2 >= 1.0);
+    x = (x1 * x1 - x2 * x2) / r2;
+    y = 2 * x1 * x2 / r2;
+  }
+
+  double3 random_unit_perpendicular(double3 a) {
+    double3 n = to_unit(a);
+
+    double3 u;
+    if (std::abs(n.x) > std::abs(n.z)) {
+      double t = 1.0 / std::sqrt(n.x * n.x + n.y * n.y);
+      u = {-n.y * t, n.x * t, 0.0};
+    } else {
+      double t = 1.0 / std::sqrt(n.y * n.y + n.z * n.z);
+      u = {0.0, -n.z * t, n.y * t};
+    }
+
+    double3 v = cross(n, u);
+    double c, s;
+    point_on_unit_circle(c, s);
+    return c * u + s * v;
+  }
 };
