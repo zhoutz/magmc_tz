@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdio>
+#include <format>
 #include <utility>
 
 struct UniformHunt {
@@ -14,18 +14,20 @@ struct UniformHunt {
     double a;
 
     if (x <= x_min) {
-      if (x < x_min)
-        printf("UniformHunt::operator(): x = %g is out of bounds [%g, %g]: %d\n", x, x_min, x_max,
-               n);
+      if (x < x_min) {
+        throw std::runtime_error(std::format(
+            "UniformHunt::operator(): x = {} is out of bounds [{}, {}]: {}", x, x_min, x_max, n));
+      }
       i = 0;
       a = 0;
       x = x_min;
       return std::make_pair(i, a);
     }
     if (x >= x_max) {
-      if (x > x_max)
-        printf("UniformHunt::operator(): x = %g is out of bounds [%g, %g]: %d\n", x, x_min, x_max,
-               n);
+      if (x > x_max) {
+        throw std::runtime_error(std::format(
+            "UniformHunt::operator(): x = {} is out of bounds [{}, {}]: {}", x, x_min, x_max, n));
+      }
       i = n - 2;
       a = 1;
       x = x_max;

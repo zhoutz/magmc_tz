@@ -3,21 +3,19 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
-#include <tuple>
 #include <vector>
 
+#include "doubles.hpp"
 #include "hunt.hpp"
 
 struct BField {
-  double Bpole, R_NS;
+  double B_pole, R_star;
   double Delta_phi, p, A, C;
   double mu_min, mu_max;
   int mu_num;
   std::vector<double> f, fp;
 
-  BField(std::string fname, double Bpole_, double R_NS_) {
-    Bpole = Bpole_;
-    R_NS = R_NS_;
+  BField(std::string fname, double B_pole, double R_star) : B_pole(B_pole), R_star(R_star) {
     std::ifstream fin(fname);
     if (!fin) {
       std::cout << "Error: cannot open file " << fname << std::endl;
@@ -31,7 +29,7 @@ struct BField {
     }
   }
 
-  auto getB(double r, double mu) {
+  double3 calc_B(double r, double mu) {
     double mu_sign = (mu >= 0) ? 1 : -1;
     mu = std::abs(mu);
 
@@ -47,8 +45,8 @@ struct BField {
     double Bth = p * fval / sth;
     double Bph = A * std::pow(fval, 1 / p) * Bth;
 
-    double scale = 0.5 * Bpole * std::pow(R_NS / r, 2 + p);
+    double scale = 0.5 * B_pole * std::pow(R_star / r, 2 + p);
 
-    return std::make_tuple(scale * Br, scale * Bth, scale * Bph);
+    return double3(scale * Br, scale * Bth, scale * Bph);
   }
 };

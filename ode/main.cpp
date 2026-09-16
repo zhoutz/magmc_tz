@@ -1,3 +1,4 @@
+#include "bfield.hpp"
 #include "constants.hpp"
 #include "dopr5.hpp"
 #include "init.hpp"
@@ -8,6 +9,7 @@
 constexpr double M_star = 1.4;                                    // M_sun
 constexpr double R_star = 10;                                     // km
 constexpr double rs = M_star * schwarzschild_radius_of_sun_in_km; // km
+constexpr double B_pole = 1e14;                                   // G
 
 using YVector = std::array<double, 4>;
 
@@ -38,6 +40,7 @@ double event_scattering(double x, YVector const &y) {
 
 int main() {
   Ran ran(1234);
+  BField bfield("table/bfield_t10.txt", B_pole, R_star);
   Photon photon = init07(ran, R_star, Polarization::O);
 
   StepperDopr5<4> stepper(&derivs, 1e-6, 1e-6);
