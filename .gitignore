@@ -1,4 +1,5 @@
 table/
+.vscode/
 
 *.out
 *.txt
