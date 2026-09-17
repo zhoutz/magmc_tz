@@ -29,7 +29,7 @@ struct BField {
     }
   }
 
-  double3 calc_B(double r, double mu) {
+  double3 calc_B(double r, double mu) const {
     double mu_sign = (mu >= 0) ? 1 : -1;
     mu = std::abs(mu);
 
