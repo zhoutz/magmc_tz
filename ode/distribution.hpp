@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdlib>
 
 struct Boltzmann {
   double b0, g0, k1;
@@ -12,6 +13,7 @@ struct Boltzmann {
 
   double f(double b) const {
     if (b * b0 < 0) return 0;
+    if (std::abs(b) >= 1) return 0;
     double t1 = std::sqrt(1 - b * b);
     double t2 = t1 * (1 - b * b);
     double g = 1 / t1;
