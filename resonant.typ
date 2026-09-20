@@ -127,6 +127,7 @@ f(beta)=exp(-gamma/(gamma_0-1))/(K_1(1/(gamma_0-1)) (1-beta^2)^(3/2))\
 overline(beta) = integral_(-1)^1 f(beta) beta d beta = beta_0
 $
 where $K_1(dots.c)$ is the modified Bessel function of the second kind of order one.
+If $beta_0 > 0$, the distribution $f(beta)$ is supported on $[0, 1]$, while $beta_0 < 0$ gives support on $[-1, 0]$. The mean velocity is always equal to the parameter $beta_0$.
 
 Define $epsilon_i$ as the fraction of the total current carried by species $i$:
 $
