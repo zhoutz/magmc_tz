@@ -1,28 +1,24 @@
-= Code description of fernandez07
+// English revision. All mathematical expressions are preserved verbatim.
+// Technical qualifications are stated in the surrounding prose.
 
+= Numerical Implementation of Resonant Cyclotron Scattering
 
-== Coordinate Systems
+These notes describe a Monte Carlo implementation of resonant cyclotron scattering in a twisted magnetosphere, following Fernández and Thompson (2007, _The Astrophysical Journal_, 660, 615-640). Photon propagation is extended to Schwarzschild spacetime, while the magnetic field and current density are adopted from the paper's flat-space model. This prescribed-background approximation neglects general-relativistic corrections to the magnetospheric equilibrium. Particles move along magnetic field lines, and scattering is treated in the recoil-free approximation.
 
-We start to describe our physic system by specifying the several frame we use throughtout text.
-The _magnetic frame_ locate with star center at origin, z axis aligned with magnetic axis.
-This frame equipped with 2 coordinate system, one is catesian basis, one is spherical basis.
-A point $P$ in cartesian basis is labeled by $(x,y,z)$, and in spherical basis is labeled by $(r,theta,phi)$.
-The conversion between them is:
+== Coordinate Systems and Photon Propagation
+
+=== Magnetic Coordinates
+
+The _magnetic frame_ is centered on the star, with its z-axis aligned with the magnetic axis. We use both Cartesian and spherical coordinates to describe positions. A point $P$ has Cartesian coordinates $(x,y,z)$ and spherical coordinates $(r,theta,phi)$, related by
 $
 cases(
 x = r sin theta cos phi ,
 y = r sin theta sin phi ,
 z = r cos theta
-) wide
-cases(
-r = sqrt(x^2 + y^2 + z^2) ,
-theta = arccos(z \/ r) ,
-phi = arctan(y \/ x)
 )
 $
 
-In the tangent space of point $P$, we have orthonormal basis $(hat(x),hat(y),hat(z))$ and 
-$(hat(r),hat(theta),hat(phi))$, their conversion from catesian to spherical is:
+At $P$, introduce the orthonormal bases $(hat(x),hat(y),hat(z))$ and $(hat(r),hat(theta),hat(phi))$. Their angular transformation is
 $
 cases(
 hat(r) = sin theta cos phi thin hat(x) + sin theta sin phi thin hat(y) + cos theta thin hat(z),
@@ -30,36 +26,30 @@ hat(theta) = cos theta cos phi thin hat(x) + cos theta sin phi thin hat(y) - sin
 hat(phi) = -sin phi thin hat(x) + cos phi thin hat(y) 
 )
 $
+In curved spacetime, the Cartesian notation above provides a convenient representation of local orthonormal directions.
 
-In Schwartzchild spacetime
+=== Orbital-Plane Representation
+
+Outside a nonrotating, spherically symmetric star, the spacetime is described by the Schwarzschild metric,
 $
-d s^2 = -f^2c^2d t^2 + (d r^2)/f^2 + r^2d theta^2 + r^2sin^2theta d phi^2,quad
-"where" f = sqrt(1 - r_s \/ r),
+d s^2 = -(1 - r_s / r)c^2d t^2 + (d r^2)/(1 - r_s \/ r) + r^2d theta^2 + r^2sin^2theta d phi^2
 $
-the photon move along the null geodesics.
-The trajectory is restricted in the _orbital plane_, whose origin at star center.
-The _proper length_ measured by a local static observer in this plane is
+where the Schwarzschild radius $r_s = 2G M_* \/ c^2$. A photon follows a null geodesic confined to an _orbital plane_ through the stellar center. The spatial path-length increment measured by local static observers is
 $
-d l^2 = (d r^2)/f^2 + r^2d psi^2
+d l^2 = (d r^2)/(1 - r_s \/ r) + r^2d psi^2
 $
-In this plane, we use polar coordiante $(r, psi)$ to label a point $P$, 
-and in the tangent space of point $P$, we have orthonormal basis $(hat(r),hat(psi))$.
-For a photon, which has position vector is $bold(r)$ and momentum unit vector $hat(k)$,
-we use $bold(r)_0$ to denote the starting position($l=0$) of the photon.
-We now have an orthonormal basis to describe the position of photon,
+
+Within the orbital plane, the polar coordinates $(r, psi)$ specify the position of $P$. At $P$, the corresponding local orthonormal basis is $(hat(r),hat(psi))$. Denote the photon's position by $bold(r)$ and its unit momentum direction by $hat(k)$. Let $bold(r)_0$ be the starting position of the current free-propagation segment, at $l=0$. The orbital-plane basis construction is
 $
 cases(
-hat(n) = hat(r) times hat(k),
-hat(e)_1 = bold(r)_0 \/ abs(bold(r)_0),
+hat(n) = (hat(r) times hat(k))\/abs(hat(r) times hat(k)) ,
+hat(e)_1 = bold(r)_0 \/ abs(bold(r)_0)  ,
 hat(e)_2 = hat(n) times hat(e)_1
-),
+)
 $
-where $hat(n)$ is the unit normal vector of the orbital plane, 
-and $hat(e)_1$ is the unit vector point from origin to the starting position of the photon, 
-and $hat(e)_2$ is the unit vector perpendicular to $hat(n)$ and $hat(e)_1$.
+Here $hat(n)$ is intended to be the unit normal to the orbital plane, $hat(e)_1$ points from the stellar center toward the segment's starting position, and $hat(e)_2$ is perpendicular to both $hat(n)$ and $hat(e)_1$.
 
-In the orbital plane, we use 3 real number $(r, psi, alpha)$ to describe 
-the photon's position vector and momentum direction:
+The three scalars $(r, psi, alpha)$ determine the position and local propagation direction within the orbital plane:
 $
 cases(
 bold(r) = r(cos psi thin hat(e)_1 + sin psi thin hat(e)_2),
@@ -67,83 +57,89 @@ hat(psi) = -sin psi thin hat(e)_1 + cos psi thin hat(e)_2,
 hat(k) = cos alpha thin hat(r) + sin alpha thin hat(psi)
 )
 $
-And the null-geodesic ODE system using proper length $l$ as the independent variable is:
+The propagation angle is measured from the radial direction and lies between $[0,pi]$. The orbital-plane basis $(hat(n),hat(e)_1,hat(e)_2)$ remains fixed between scattering events.
+
+Using the local spatial path length $l$ as the independent variable gives
 $
 (d r)/(d l) &= sqrt(1-r_s/r) cos alpha  \
 (d psi)/(d l) &= sin alpha / r \
 (d alpha)/(d l) &= - (sin alpha) / r (1-(3r_s)/(2r))/sqrt(1-r_s/r)
 $
-when $r_s -> 0$, we fall back to the flat space case.
+These equations reduce to their flat-space counterparts as $r_s -> 0$. 
 
+== Magnetospheric Field and Current
 
-== Magnetoshpere
-
+We adopt the axisymmetric, self-similar twisted magnetic field of Fernández and Thompson (2007, Section 2.1):
 $
 bold(B)(r,theta)=(B_"pole")/2 (R_* /r)^(2+p) bold(F)(cos theta)
 $
+The prefactor contains the polar surface field strength and the stellar radius. The parameter $p$ controls the radial decay, while the angular structure is
+$
+bold(F) = F_r thin hat(r) + F_theta thin hat(theta) + F_phi thin hat(phi) \
+F_r = -f' ,quad
+F_theta = (p f)/(sin theta) ,quad
+F_phi = sqrt(C/(p(p+1))) f^(1/p) B_theta
+$
+In this definition, the component symbols denote dimensionless angular factors. Physical magnetic-field components include the common radial prefactor in the preceding equation. Component ratios and the unit field direction are independent of this prefactor.
 
+Define the magnetic colatitude cosine by
 $
-bold(F) = B_r thin hat(r) + B_theta thin hat(theta) + B_phi thin hat(phi) \
-B_r = -f' ,quad
-B_theta = (p f)/(sin theta) ,quad
-B_phi = sqrt(C/(p(p+1))) f^(1/p) B_theta
-$
-
-$
-// mu = hat(k) dot hat(B),quad
-// mu_k = hat(k) dot hat(z),quad
 mu_z = hat(r) dot hat(z)
 $
-
-where $f(mu_z)$ satisfying
+The flux function $f(mu_z)$ satisfies
 $
 sin^2theta f'' + C f^(1+2/p) + p(p+1)f = 0,quad
 f'(0)=0,quad
 f'(1)=-2,quad
 f(1)=0
 $
+Primes in this equation denote differentiation with respect to the magnetic colatitude cosine. The boundary conditions specify the northern-hemisphere solution; equatorial symmetry supplies its continuation to the southern hemisphere.  The constants $p$ and $C$ must be chosen consistently with the boundary-value problem.
 
-Twist angle
+The net twist between the two magnetic hemispheres is
 $
 Delta phi = 2 lim_(theta_0->0) integral_(theta_0)^(pi/2) (B_phi (theta))/(B_theta (theta)) (d theta)/(sin theta)
 $
-
-Electric current
+and the associated current density is
 $
 bold(J) = ((p+1)c)/(4pi r) (B_phi)/(B_theta) bold(B)
 $
+The magnetic and current expressions in this section retain the Gaussian-unit conventions of the original paper.
 
+== Current-Carrying Particle Populations
 
-== Current components
-To support the electric current, we assume there are n type of particles moving along the magnetic field lines,
-each particle type have their own velocity distribution.
+Suppose that several particle species carry the magnetospheric current, each with its own velocity distribution along the magnetic field. The signed current density parallel to the field is
 $
 J = sum_i Z_i e n_i overline(beta_i) c
 $
-where $Z_i$ is the charge number of type ith particle, for electron $Z_i=-1$, for positron $Z_i=1$.
-$n_i$ is the number density ($N\/V$) of type ith particle.
-To describe the velocity distribution, we use
+Here $Z_i$ is the charge number of species $i$: $Z_i=-1$ for electrons and $Z_i=1$ for positrons. The number density $n_i$ is the particle count per unit local volume, $N\/V$, as measured in the local static frame. The elementary charge is taken to be positive, and positive particle velocity denotes motion along the magnetic field.
+
+We normalize each species' number-weighted velocity distribution and define its signed mean velocity by
 $
 integral_(-1)^1 f(beta_i) d beta_i = 1, quad
 overline(beta_i) = integral_(-1)^1 f(beta_i) beta_i d beta_i
 $
+The distribution in this equation is a probability density with respect to velocity in units of the speed of light. In particular, it must be distinguished from a probability density with respect to dimensionless momentum, which is the convention used in equation (19) of the paper.
 
-For example, the 1d boltzmann distribution, parametrized by $beta_0$:
+As an example, a one-dimensional relativistic Boltzmann distribution may be parametrized by $beta_0$.
 $
 gamma_0 = 1/sqrt(1-beta_0^2), quad gamma = 1/sqrt(1-beta^2)\
-f(beta)=exp(gamma/(gamma_0-1))/(K_1(1/(gamma_0-1)) (1-beta^2)^(3/2))\
+f(beta)=exp(-gamma/(gamma_0-1))/(K_1(1/(gamma_0-1)) (1-beta^2)^(3/2))\
 overline(beta) = integral_(-1)^1 f(beta) beta d beta = beta_0
 $
-where $K_1(dots.c)$ is the modified Bessel function of the second kind with order 1.
+where $K_1(dots.c)$ is the modified Bessel function of the second kind of order one.
 
-
-We define $epsilon_i$ as the proportion of the current contributed by the i-th type of particle to the total current.
+Define $epsilon_i$ as the fraction of the total current carried by species $i$:
 $
-epsilon_i = (Z_i e n_i overline(beta_i)c)/J
+epsilon_i = (Z_i e n_i overline(beta_i)c)/J,quad
+sum_i epsilon_i = 1
 $
+In the positive-twist case considered below, each modeled species is assumed to carry current in the direction of the total current. Thus electrons and positrons have oppositely directed mean velocities.
 
-== Optical depth
+== Resonant Optical Depth
 
+=== Density and Scattering Cross Section
+
+First consider the contribution from one particle species. Its differential optical depth is
 $
 (d tau)/(d l)= integral_(-1)^1 d beta (d n_i)/(d beta) sigma
 $
@@ -152,44 +148,60 @@ $
 (d n_i)/(d beta) = n_i f_i,quad
 sigma = 4pi^2(1-beta mu) (abs(Z_i)e)/B abs(e'_(l,r))^2 omega_D delta(omega - omega_D)
 $
+The magnetic-field strength, photon direction, and unprimed photon frequency are evaluated in the local static frame. The direction cosine is measured relative to the local magnetic field, and a prime on a scattering quantity denotes the particle rest frame. The velocity-dependent photon-particle flux factor is already included in the cross section written above.
 
-Current and particle density satisfy:
+The photon frequency entering the resonance condition equals the frequency at infinity divided by the local Schwarzschild lapse.
+$
+omega = omega_infinity / sqrt(1-r_s\/r)
+$
+
+The local cyclotron angular frequency is 
+$
+omega_c = (abs(Z) e B)/(m c)
+$
+in Gaussian units. The Doppler-shifted resonance frequency is defined below.
+
+The relation between the current contribution and particle density is
 $
 Z_i e n_i overline(beta_i)c = epsilon_i J = epsilon_i ((p+1)c)/(4pi r) (B_phi)/(B_theta) B
 $
-which is
+which gives
 $
 n_i =  (epsilon_i (p+1))/(Z_i e overline(beta_i) 4pi r) (B_phi)/(B_theta) B
 $
-so
+For a nonzero mean velocity and the current-direction convention specified above, substitution yields
 $
 (d tau)/(d l)
 &= integral_(-1)^1 d beta (epsilon_i (p+1))/(Z_i e overline(beta_i) 4pi r) (B_phi)/(B_theta) B f_i 4pi^2(1-beta mu) (abs(Z_i)e)/B abs(e'_(l,r))^2 omega_D delta(omega - omega_D)\
 &= (epsilon_i (p+1)pi)/(abs(overline(beta_i))r) (B_phi)/(B_theta) 
 integral_(-1)^1 d beta f_i (1-beta mu) abs(e'_(l,r))^2 omega_D delta(omega - omega_D)
 $
-using identity of Dirac delta function
+These expressions use the number-weighted velocity distribution defined in the preceding section. The resulting inverse mean-speed factor differs from the inverse individual-speed factor printed inside the integral in equation (25) of Fernández and Thompson (2007). For a unidirectional population, the latter factor can be reconciled with the present derivation by reinterpreting and reweighting the paper's distribution as a current-weighted distribution. However, equation (23) of the paper defines its distribution as number-weighted, so the printed definitions leave an inconsistency that must be resolved when comparing implementations.
+
+=== Resonant Velocities
+
+For distinct simple roots, the Dirac delta function can be expanded as
 $
 delta(omega - omega_D) = sum_plus.minus (delta (beta-beta^plus.minus))/abs(partial omega_D \/ partial beta)_plus.minus
 $
-Here we want to solve the equation
+We therefore solve the resonance condition
 $
 omega = omega_D
 $
-for $beta$. This equation is the condition of resonance scattering.
+for the particle velocity $beta$, with
 $
 omega = omega_D = (omega_c)/(gamma(1-beta mu))
 $
-introducing $x = (omega_c)/omega$, we have
+Introducing $x = omega_c\/omega$ gives
 $
 x = gamma(1-beta mu) = (1-beta mu)/sqrt(1-beta^2) \
 x^2(1-beta^2) = (1-beta mu)^2 \
 (x^2+mu^2) beta^2 - 2 mu beta + (1-x^2) = 0 \
 beta^plus.minus = (mu plus.minus x sqrt(x^2+mu^2-1))/(x^2+mu^2)
 $
-when $x^2+mu^2>1$, this equation has two real roots, corresponding to 2 velocity of current carrying particles.
+For a photon direction that is not exactly parallel or antiparallel to the field, $x^2+mu^2>1$ gives two distinct physical resonance velocities. Only roots within the support of the chosen particle distribution contribute. 
 
-The denominator of Dirac delta identity:
+At fixed photon position and direction, the derivative appearing in the denominator is
 $
 (partial omega_D) / (partial beta) 
 &= partial/(partial beta) [(omega_c)/(gamma(1-beta mu))] \
@@ -197,8 +209,7 @@ $
 &= omega_c (mu-beta)/((1-beta mu)^2sqrt(1-beta^2)) \
 &= omega_D (mu-beta)/((1-beta mu)(1-beta^2)) \
 $
-
-So we back to the differential optical depth:
+Substituting this result into the optical-depth integral gives
 $
 (d tau)/(d l)
 &= (epsilon_i (p+1)pi)/(abs(overline(beta_i))r) (B_phi)/(B_theta) 
@@ -206,106 +217,115 @@ sum_plus.minus f_i (1-beta^plus.minus mu) abs(e'_(l,r))^2 omega_D  ((1-beta^plus
 &= (epsilon_i (p+1)pi)/(abs(overline(beta_i))r) (B_phi)/(B_theta) 
 sum_plus.minus f_i  abs(e'_(l,r))^2 ((1-beta^plus.minus mu)^2(1-beta^plus.minus^2))/(abs(mu-beta^plus.minus)) 
 $
+Every velocity-dependent factor, including the distribution and polarization overlap, must be evaluated separately at the corresponding resonant root. The total differential optical depth is obtained by summing these single-species contributions over all scattering populations.
 
-During the evolution the photon along null-geodesic, we actually recording:
+=== Direction Cosine from the Stored Photon State
+
+During free propagation, the photon state is stored as
 $
 hat(n), hat(e)_1, hat(e)_2, r, psi, alpha, "O/E", omega_infinity
 $
-and the magnetic field will tell us:
+The magnetic-field model supplies the orthonormal spherical components
 $
 B_r, B_theta, B_phi
 $
-We find that $mu = hat(k)dot hat(B)$ has to be computed from these quantity, and $abs(e'_(l,r))^2$ is rely on $mu$ and $beta$. To compute $mu$:
+Normalize these components by their Euclidean norm to obtain the components of the unit field direction. The common radial prefactor may be omitted when only this direction is needed.
+
+The direction cosine $mu = hat(k)dot hat(B)$ must be reconstructed from these quantities, while the polarization overlap $abs(e'_(l,r))^2$ depends on both $mu$ and the resonant particle velocity $beta$. To obtain $mu$, write
 $
 hat(k) = cos alpha thin hat(r) + sin alpha thin hat(psi) 
 = cos alpha thin hat(r) + sin alpha thin (hat(n) times hat(r)) \
 hat(B) = hat(B)_r thin hat(r) + hat(B)_theta thin hat(theta) + hat(B)_phi thin hat(phi)
 $
+The scalar-triple-product identities then give
 $
 mu = hat(k) dot hat(B)
 &= hat(B)_r cos alpha + sin alpha[hat(B)_theta thin hat(theta) dot (hat(n) times hat(r)) + hat(B)_phi thin hat(phi) dot (hat(n) times hat(r))] \
 &= hat(B)_r cos alpha + sin alpha[hat(B)_theta thin hat(n) dot hat(phi) - hat(B)_phi thin hat(n) dot hat(theta)]
 $
-To compute $hat(n) dot hat(phi)$ and $hat(n) dot hat(theta)$, we first compute
+To evaluate $hat(n) dot hat(phi)$ and $hat(n) dot hat(theta)$, first reconstruct the radial direction:
 $
 hat(r) = cos psi thin hat(e)_1 + sin psi thin hat(e)_2
 $
-and decompose the $x,y,z$ components
+Writing its $x,y,z$ components as
 $
 hat(r) = (hat(r)_x, hat(r)_y, hat(r)_z)
 $
-so
+gives the local angular basis vectors
 $
 hat(theta) = ((hat(r)_x hat(r)_z)/sqrt(hat(r)_x^2 + hat(r)_y^2), (hat(r)_y hat(r)_z)/sqrt(hat(r)_x^2 + hat(r)_y^2), -sqrt(hat(r)_x^2 + hat(r)_y^2))\
 hat(phi) = (-(hat(r)_y)/sqrt(hat(r)_x^2 + hat(r)_y^2), (hat(r)_x)/sqrt(hat(r)_x^2 + hat(r)_y^2), 0)
 $
-and $mu$ is done.
+These relations provide all quantities needed to evaluate $mu$. 
 
-The overlapping $abs(e'_(l,r))^2$ is
+=== Polarization Overlap
+
+We assume that vacuum polarization dominates the dielectric response and that the photon occupies one of the two linear normal modes. The E-mode electric vector is perpendicular to the plane containing the photon direction and magnetic field; the O-mode electric vector lies in that plane and is perpendicular to the photon direction. Under adiabatic propagation, the mode label is retained between scattering events.
+
+The squared overlap $abs(e'_(l,r))^2$, evaluated in the particle rest frame, is
 $
 abs(e'_(l,r))^2 = cases(
     1\/2"," quad & "if polarization is E",
     mu'^2\/2","quad & "if polarization is O"
 )
 $
-and the $mu'$ in particle static frame is related to $mu$ in magnetic frame by a doppler shift/lorentz boost:
+The particle-rest-frame direction cosine $mu'$ is related to the local static-frame cosine $mu$ by relativistic aberration for a boost along the magnetic field:
 $
 mu' = (mu-beta)/(1-beta mu), quad
 mu = (mu'+beta)/(1+beta mu')
 $
+The appropriate resonant velocity must be used for each branch when evaluating this overlap.
 
+== Photon State After Resonant Scattering
 
-
-== Resonance scattering
-
-Once we decide the photon should collide with a current carrying particle with velocity $beta$,
-remind that we use 
+Once a scattering event has been located, select the particle species and resonant velocity branch with probabilities proportional to their contributions to the local differential optical depth. For a selected particle velocity $beta$, the photon state before scattering is
 $
 (hat(n), hat(e)_1, hat(e)_2, r, psi, alpha, "O/E", omega_infinity)
-$ 
-to describe the photon, we have to update the following:
+$
+The position remains unchanged during the instantaneous interaction, while the following stored quantities are updated:
 $
 (hat(n), hat(e)_1, hat(e)_2, psi, alpha, "O/E", omega_infinity)
 $
 
-We can update $hat(e)_1$ to $hat(r)$, and update $psi$ to $0$, by our construction.
+=== Outgoing Direction and Orbital Plane
 
-In particle static frame, the $mu'_"out"$ satisfy distribution:
+For the new free-propagation segment, reset $hat(e)_1$ to the current $hat(r)$ and set $psi$ to $0$. This changes the orbital-plane reference direction without moving the photon.
+
+In the particle rest frame, the outgoing direction cosine $mu'_"out"$ has the normalized probability density
 $
 p(mu'_"out") = 3/8 (1+mu'_"out"^2),quad -1<= mu'_"out" <= 1
 $
-this distribution is easy to sample.
-Then we can get 
+This distribution is summed over the two outgoing polarization modes. After sampling the direction cosine, transform it to the local static frame:
 $
 mu_"out" = (mu'_"out"+beta)/(1+beta mu'_"out")
 $
-In magnetic frame, we already have $hat(B)$, so we can sample a unit vector $hat(t)$ 
-that perpendicular to $hat(B)$ with uniform distribution on a 2D circle, 
-now we update the momentum unit vector as:
+The azimuth about the magnetic field is uniform and is unchanged by a boost along the field. Given $hat(B)$, sample a unit vector $hat(t)$ uniformly on the unit circle perpendicular to $hat(B)$. The outgoing momentum direction is then
 $
 hat(k)_"out" = mu_"out" thin hat(B) + sqrt(1-mu_"out"^2) thin hat(t)
 $
-and
+and the new radial propagation angle is
 $
 alpha_"out" = arccos(hat(r) dot hat(k)_"out")
 $
 
-
-Then $hat(n)_"out"$ and $hat(e)_(2,"out")$ is determined by:
+The updated plane normal $hat(n)_"out"$ and second in-plane basis vector $hat(e)_(2,"out")$ are
 $
 hat(n)_"out" = (hat(r) times hat(k)_"out") \/ abs(hat(r) times hat(k)_"out")\
 hat(e)_(2,"out") = hat(n)_"out" times hat(e)_1
 $
+The first basis vector in this expression is the one just reset to the current radial direction.
 
+=== Frequency and Polarization
 
-
-
-To update the frequency, we use
+Neglecting recoil, the scattering is elastic in the particle rest frame. The incoming and outgoing photons are evaluated at the same radius, so their common gravitational redshift factor cancels in the frequency ratio:
 $
 omega_(infinity,"out")/omega_(infinity,"in") = (1-beta mu_"in")/(1-beta mu_"out")
 $
+Between scattering events, the frequency at infinity remains constant; the frequency measured by a local static observer changes with radius through the lapse factor.
 
-To update the "O/E" label, we use
+Finally, sample the outgoing polarization label using
 $
 P("E") = 1/(1+mu'_"out"^2),quad P("O") = 1-P("E")
 $
+These probabilities depend on the outgoing direction in the particle rest frame. Under the assumed boost along the magnetic field, the resulting E/O mode identification can also be used in the local static frame.
+

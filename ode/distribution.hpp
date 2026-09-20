@@ -17,7 +17,7 @@ struct Boltzmann {
     double t1 = std::sqrt(1 - b * b);
     double t2 = t1 * (1 - b * b);
     double g = 1 / t1;
-    return std::exp(g / (g0 - 1)) / (k1 * t2);
+    return std::exp(-g / (g0 - 1)) / (k1 * t2);
   }
 
   double b_bar() const { return b0; }
