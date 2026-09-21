@@ -1,13 +1,14 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
-inline bool solve_quadratic(double a, double b, double c, double &x1, double &x2) noexcept {
+inline bool solve_quadratic(double a, double b, double c, std::array<double, 2> &roots) noexcept {
   constexpr double nan = std::numeric_limits<double>::quiet_NaN();
 
   auto fail = [&]() noexcept {
-    x1 = nan;
-    x2 = nan;
+    roots[0] = nan;
+    roots[1] = nan;
     return false;
   };
 
@@ -52,7 +53,7 @@ inline bool solve_quadratic(double a, double b, double c, double &x1, double &x2
     std::swap(r1, r2);
   }
 
-  x1 = r1;
-  x2 = r2;
+  roots[0] = r1;
+  roots[1] = r2;
   return true;
 }

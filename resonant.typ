@@ -364,6 +364,11 @@ and the new radial propagation angle is
 $
 alpha_"out" = arccos(hat(r) dot hat(k)_"out")
 $
+equivalently, one can use 
+$
+alpha_"out" = "atan2"(abs(hat(k)_"out" times hat(r)) , hat(k)_"out" dot hat(r))
+$
+for better numerical stability.
 
 The updated plane normal $hat(n)_"out"$ and second in-plane basis vector $hat(e)_(2,"out")$ are
 $

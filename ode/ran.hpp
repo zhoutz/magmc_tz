@@ -81,7 +81,7 @@ struct Ran {
     y = 2 * x1 * x2 / r2;
   }
 
-  double3 random_unit_perpendicular(double3 a) {
+  double3 unit_perp_to(double3 a) {
     double3 n = to_unit(a);
 
     double3 u;
