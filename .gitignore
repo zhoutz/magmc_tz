@@ -1,7 +1,10 @@
 table/
 build/
+article/
 .vscode/
 
 *.out
 *.txt
 *.pdf
+
+.DS_Store
