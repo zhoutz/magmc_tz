@@ -165,7 +165,6 @@ int main() {
   stepper.add_event(&event_absorption);
   stepper.add_event(&event_scattering);
   double target_tau = std::log(ran.U());
-  // std::println("Target optical depth: {}", target_tau);
   photon_evolution.r_psi_alpha_tau[3] = target_tau;
   stepper.init(0.0, 1e-3 * R_star, photon_evolution.r_psi_alpha_tau);
 
@@ -191,8 +190,7 @@ int main() {
                      tau);
         photon_evolution.r_psi_alpha_tau = stepper.y_new;
         photon_evolution.perform_scattering();
-        double target_tau = std::log(ran.U());
-        photon_evolution.r_psi_alpha_tau[3] = target_tau;
+        photon_evolution.r_psi_alpha_tau[3] = std::log(ran.U());
         stepper.init(0, stepper.h_new, photon_evolution.r_psi_alpha_tau);
         continue;
       }
