@@ -49,4 +49,12 @@ struct BField {
 
     return double3(scale * Br, scale * Bth, scale * Bph);
   }
+
+  double Bphi_over_Btheta(double mu) const {
+    mu = std::abs(mu);
+    UniformHunt mu_hunt(mu_min, mu_max, mu_num);
+    auto [i, a] = mu_hunt(mu);
+    double fval = (1 - a) * f[i] + a * f[i + 1];
+    return A * std::pow(fval, 1 / p);
+  }
 };

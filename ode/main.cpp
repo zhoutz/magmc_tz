@@ -50,6 +50,9 @@ struct PhotonEvolution {
     double omega = omega_inf / std::sqrt(1 - rs / r);
     double x = omega_c / omega;
     double rho = std::sqrt(r_hat.x * r_hat.x + r_hat.y * r_hat.y);
+    if (rho == 0) {
+      throw std::runtime_error("Photon is moving along the z-axis, which is not allowed");
+    }
     double3 theta_hat{r_hat.x * r_hat.z / rho, r_hat.y * r_hat.z / rho, -rho};
     double3 phi_hat{-r_hat.y / rho, r_hat.x / rho, 0};
     double mu_in =
@@ -65,7 +68,7 @@ struct PhotonEvolution {
       ret += f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 - beta * beta) /
              std::abs(mu_in - beta);
     }
-    ret *= (bfield.p + 1) * pi * b.z / (std::abs(fb.b_bar()) * r * b.y);
+    ret *= (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_bar()) * r);
 
     if (!std::isfinite(ret)) {
       throw std::runtime_error("Non-finite dtaudl encountered");
@@ -96,16 +99,20 @@ struct PhotonEvolution {
     if (!solve_quadratic(x * x + mu_in * mu_in, -2 * mu_in, 1 - x * x, betas)) {
       throw std::runtime_error("No valid beta found for scattering");
     }
-    std::array<double, 2> weights;
+    std::array<double, 2> weights{};
     for (int i = 0; i < 2; ++i) {
       double beta = betas[i];
       double f = fb.f(beta);
+      if (f == 0) continue;
       double mu_in_p = (mu_in - beta) / (1 - beta * mu_in);
       double esq = (pol == Polarization::E) ? (0.5) : (0.5 * mu_in_p * mu_in_p);
       weights[i] = f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 - beta * beta) /
                    std::abs(mu_in - beta);
     }
     double total_weight = weights[0] + weights[1];
+    if (!(total_weight > 0.0) || !std::isfinite(total_weight)) {
+      throw std::runtime_error("Invalid scattering weights");
+    }
     double rand_val = ran.U() * total_weight;
     double beta = (rand_val < weights[0]) ? betas[0] : betas[1];
 
@@ -130,6 +137,10 @@ struct PhotonEvolution {
     r_psi_alpha_tau[3] = 0;
     pol = pol_out;
     omega_inf = omega_inf_out;
+
+    if (!std::isfinite(omega_inf)) {
+      throw std::runtime_error("Non-finite omega_inf encountered after scattering");
+    }
   }
 };
 
