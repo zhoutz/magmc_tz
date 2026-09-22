@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -14,7 +15,7 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   static_assert(N > 0, "StepperDopr5 requires at least one state variable");
   static constexpr double EPS = std::numeric_limits<double>::epsilon();
   using YVector = std::array<double, N>;
-  using EventFunc = double (*)(double, YVector const &);
+  using EventFunc = std::function<double(double, YVector const &)>;
 
   DerivFunc const &derivs;
   double x_old, h_old, h_new;
@@ -28,20 +29,27 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   double errold;
   bool reject;
 
-  int event_count = 0;
-  std::vector<EventFunc> event_funcs;
-  std::vector<int> event_signs;
+  struct Event {
+    EventFunc func;
+    double x;
+    int sign;
+    bool active;
+  };
+
+  std::vector<Event> events;
 
   StepperDopr5(DerivFunc const &derivs, double atol, double rtol)
       : derivs(derivs), atol(atol), rtol(rtol) {}
 
-  static int sign(double value) { return (value > 0.0) - (value < 0.0); }
+  static int sign(double value) { return (value > 0) - (value < 0); }
 
   void add_event(EventFunc event_func) {
-    int initial_sign = 0;
-    event_funcs.push_back(event_func);
-    event_signs.push_back(initial_sign);
-    ++event_count;
+    events.emplace_back(Event{
+        .func = std::move(event_func),
+        .x = 0,
+        .sign = 0,
+        .active = true,
+    });
   }
 
   void init(double x_init, double h_init, YVector const &y_init) {
@@ -51,8 +59,8 @@ template <int N, class DerivFunc> struct StepperDopr5 {
     derivs(x_old, y_old, dydx_old);
     errold = 1.0e-4;
     reject = false;
-    for (int i = 0; i < event_count; ++i) {
-      event_signs[i] = sign(event_funcs[i](x_old, y_old));
+    for (auto &event : events) {
+      event.sign = sign(event.func(x_old, y_old));
     }
   }
 
@@ -112,17 +120,27 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   }
 
   double error() const {
+#if 0
     double err = 0.0;
     for (int i = 0; i < N; i++) {
       double sk = atol + rtol * std::max(std::abs(y_old[i]), std::abs(y_new[i]));
       err += (y_err[i] / sk) * (y_err[i] / sk);
     }
-
     if (!std::isfinite(err)) {
       throw std::runtime_error("Non-finite error encountered in StepperDopr5");
     }
-
     return std::sqrt(err / N);
+#else
+    double err = 0.0;
+    for (int i = 0; i < N; i++) {
+      double sk = atol + rtol * std::max(std::abs(y_old[i]), std::abs(y_new[i]));
+      err = std::max(err, std::abs(y_err[i]) / sk);
+    }
+    if (!std::isfinite(err)) {
+      throw std::runtime_error("Non-finite error encountered in StepperDopr5");
+    }
+    return err;
+#endif
   }
 
   bool success(double err) {
@@ -178,46 +196,47 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   }
 
   int detect_event() {
-    std::vector<std::pair<int, double>> active_events;
-    active_events.reserve(event_count);
     double x_new = x_old + h_old;
-    for (int i = 0; i < event_count; ++i) {
-      double event_value = event_funcs[i](x_new, y_new);
+    for (auto &event : events) {
+      double event_value = event.func(x_new, y_new);
       int event_sign_new = sign(event_value);
-      if (event_signs[i] != 0 && event_sign_new * event_signs[i] <= 0) {
-        active_events.push_back(std::make_pair(i, 0.0));
+      if (event.sign != 0 && event_sign_new * event.sign <= 0) {
+        event.active = true;
+      } else {
+        event.active = false;
       }
-      event_signs[i] = event_sign_new;
+      event.sign = event_sign_new;
     }
 
-    if (!active_events.empty()) {
+    if (std::any_of(events.begin(), events.end(),
+                    [](Event const &event) { return event.active; })) {
       prepare_dense();
       double x_tol = 4 * EPS * (1.0 + std::abs(x_old));
-      for (auto &event : active_events) {
-        event.second = zriddr([&](double x) { return event_funcs[event.first](x, dense_out(x)); },
-                              x_old, x_new, x_tol);
+      for (auto &event : events) {
+        if (!event.active) {
+          event.x = 1e99;
+        } else {
+          event.x =
+              zriddr([&](double x) { return event.func(x, dense_out(x)); }, x_old, x_new, x_tol);
+        }
       }
-      std::sort(active_events.begin(), active_events.end(),
-                [&](std::pair<int, double> const &a, std::pair<int, double> const &b) {
-                  return h_old > 0.0 ? a.second < b.second : a.second > b.second;
-                });
+      auto leftmost_event = std::min_element(
+          events.begin(), events.end(), [&](Event const &a, Event const &b) { return a.x < b.x; });
 
-      double event_x = active_events.front().second;
-      y_new = dense_out(event_x);
-      derivs(event_x, y_new, dydx_new);
-      h_old = event_x - x_old;
+      double leftmost_x = leftmost_event->x;
+      y_new = dense_out(leftmost_x);
+      derivs(leftmost_x, y_new, dydx_new);
+      h_old = leftmost_x - x_old;
 
-      for (int i = 0; i < event_count; ++i) {
-        event_signs[i] = sign(event_funcs[i](event_x, y_new));
-      }
-
-      for (auto const &event : active_events) {
-        if (std::abs(event.second - event_x) < x_tol) {
-          event_signs[event.first] = 0;
+      for (auto &event : events) {
+        if (event.active && std::abs(event.x - leftmost_x) < x_tol) {
+          event.sign = 0;
+        } else {
+          event.sign = sign(event.func(leftmost_x, y_new));
         }
       }
 
-      return active_events.front().first;
+      return std::distance(events.begin(), leftmost_event);
     }
     return -1;
   }
