@@ -118,6 +118,11 @@ template <int N, class DerivFunc> struct StepperDopr5 {
       double sk = atol + rtol * std::max(std::abs(y_old[i]), std::abs(y_new[i]));
       err += (y_err[i] / sk) * (y_err[i] / sk);
     }
+
+    if (!std::isfinite(err)) {
+      throw std::runtime_error("Non-finite error encountered in StepperDopr5");
+    }
+
     return std::sqrt(err / N);
   }
 
