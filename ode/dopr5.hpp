@@ -134,10 +134,10 @@ template <int N, class DerivFunc> struct StepperDopr5 {
     double err = 0.0;
     for (int i = 0; i < N; i++) {
       double sk = atol + rtol * std::max(std::abs(y_old[i]), std::abs(y_new[i]));
+      if (!std::isfinite(sk) || !std::isfinite(y_err[i])) {
+        throw std::runtime_error("Non-finite error encountered in StepperDopr5");
+      }
       err = std::max(err, std::abs(y_err[i]) / sk);
-    }
-    if (!std::isfinite(err)) {
-      throw std::runtime_error("Non-finite error encountered in StepperDopr5");
     }
     return err;
 #endif
@@ -211,18 +211,22 @@ template <int N, class DerivFunc> struct StepperDopr5 {
     if (std::any_of(events.begin(), events.end(),
                     [](Event const &event) { return event.active; })) {
       prepare_dense();
-      double x_tol = 4 * EPS * (1.0 + std::abs(x_old));
+      double x_tol = 4 * EPS * (1 + std::abs(x_old));
       for (auto &event : events) {
-        if (!event.active) {
-          event.x = 1e99;
-        } else {
+        if (event.active) {
           event.x =
               zriddr([&](double x) { return event.func(x, dense_out(x)); }, x_old, x_new, x_tol);
         }
       }
-      auto leftmost_event = std::min_element(
-          events.begin(), events.end(), [&](Event const &a, Event const &b) { return a.x < b.x; });
 
+      auto leftmost_event = events.end();
+      for (auto event = events.begin(); event != events.end(); ++event) {
+        if (!event->active) continue;
+        if (leftmost_event == events.end() ||
+            (event->x - x_old) / h_old < (leftmost_event->x - x_old) / h_old) {
+          leftmost_event = event;
+        }
+      }
       double leftmost_x = leftmost_event->x;
       y_new = dense_out(leftmost_x);
       derivs(leftmost_x, y_new, dydx_new);
