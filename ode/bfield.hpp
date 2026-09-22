@@ -42,7 +42,7 @@ struct BField {
     double sth = std::sqrt(1 - mu * mu);
 
     double Br = -fpval;
-    double Bth = p * fval / sth;
+    double Bth = (sth == 0) ? 0 : p * fval / sth;
     double Bph = A * std::pow(fval, 1 / p) * Bth;
 
     double scale = 0.5 * B_pole * std::pow(R_star / r, 2 + p);

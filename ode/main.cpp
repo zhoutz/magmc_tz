@@ -59,12 +59,18 @@ struct PhotonEvolution {
     double ret = 0;
     for (double beta : betas) {
       double f = fb.f(beta);
+      if (f == 0) continue;
       double mup_in = (mu_in - beta) / (1 - beta * mu_in);
       double esq = (pol == Polarization::E) ? (0.5) : (0.5 * mup_in * mup_in);
       ret += f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 - beta * beta) /
              std::abs(mu_in - beta);
     }
     ret *= (bfield.p + 1) * pi * b.z / (std::abs(fb.b_bar()) * r * b.y);
+
+    if (!std::isfinite(ret)) {
+      throw std::runtime_error("Non-finite dtaudl encountered");
+    }
+
     return ret;
   }
 
