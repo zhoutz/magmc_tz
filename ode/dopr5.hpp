@@ -40,6 +40,7 @@ template <int N, class DerivFunc> struct StepperDopr5 {
 
   StepperDopr5(DerivFunc const &derivs, double atol, double rtol)
       : derivs(derivs), atol(atol), rtol(rtol) {}
+  StepperDopr5(DerivFunc const &&, double, double) = delete;
 
   static int sign(double value) { return (value > 0) - (value < 0); }
 
