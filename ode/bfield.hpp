@@ -18,8 +18,7 @@ struct BField {
   BField(std::string fname, double B_pole, double R_star) : B_pole(B_pole), R_star(R_star) {
     std::ifstream fin(fname);
     if (!fin) {
-      std::cout << "Error: cannot open file " << fname << std::endl;
-      std::exit(1);
+      throw std::runtime_error("Error: cannot open file " + fname);
     }
     fin >> Delta_phi >> p >> A >> C >> mu_min >> mu_max >> mu_num;
     f.resize(mu_num);
