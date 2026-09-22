@@ -14,7 +14,6 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   static_assert(N > 0, "StepperDopr5 requires at least one state variable");
   static constexpr double EPS = std::numeric_limits<double>::epsilon();
   using YVector = std::array<double, N>;
-  // using DerivFunc = void (*)(double, YVector const &, YVector &);
   using EventFunc = double (*)(double, YVector const &);
 
   DerivFunc const &derivs;
@@ -185,7 +184,7 @@ template <int N, class DerivFunc> struct StepperDopr5 {
     for (int i = 0; i < event_count; ++i) {
       double event_value = event_funcs[i](x_new, y_new);
       int event_sign_new = sign(event_value);
-      if (event_sign_new * event_signs[i] < 0) {
+      if (event_signs[i] != 0 && event_sign_new * event_signs[i] <= 0) {
         active_events.push_back(std::make_pair(i, 0.0));
       }
       event_signs[i] = event_sign_new;
@@ -208,15 +207,13 @@ template <int N, class DerivFunc> struct StepperDopr5 {
       derivs(event_x, y_new, dydx_new);
       h_old = event_x - x_old;
 
+      for (int i = 0; i < event_count; ++i) {
+        event_signs[i] = sign(event_funcs[i](event_x, y_new));
+      }
+
       for (auto const &event : active_events) {
         if (std::abs(event.second - event_x) < x_tol) {
           event_signs[event.first] = 0;
-        }
-      }
-
-      for (int i = 0; i < event_count; ++i) {
-        if (event_signs[i] != 0) {
-          event_signs[i] = sign(event_funcs[i](event_x, y_new));
         }
       }
 

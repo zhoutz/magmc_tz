@@ -50,9 +50,6 @@ struct PhotonEvolution {
     double omega = omega_inf / std::sqrt(1 - rs / r);
     double x = omega_c / omega;
     double rho = std::sqrt(r_hat.x * r_hat.x + r_hat.y * r_hat.y);
-    if (rho == 0) {
-      throw std::runtime_error("Photon is moving along the z-axis, which is not allowed");
-    }
     double3 theta_hat{r_hat.x * r_hat.z / rho, r_hat.y * r_hat.z / rho, -rho};
     double3 phi_hat{-r_hat.y / rho, r_hat.x / rho, 0};
     double mu_in =
