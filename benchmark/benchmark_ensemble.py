@@ -42,5 +42,5 @@ for beta0, mode in [(-.75,'O'),(-.75,'E'),(-.2,'O'),(-.2,'E')]:
     if outcomes['event'] != outcomes['fast']:
         print('Counts differ: investigate together with path-wise accuracy tests; counts alone are not an accuracy test.')
 with (root/'benchmark/ensemble_speed.csv').open('w') as stream:
-    writer=csv.DictWriter(stream,fieldnames=list(rows[0]))
+    writer=csv.DictWriter(stream,fieldnames=list(rows[0]),lineterminator="\n")
     writer.writeheader(); writer.writerows(rows)

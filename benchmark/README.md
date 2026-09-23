@@ -82,7 +82,7 @@ make                    # 编译默认事件传播主程序
 ./build/main
 ./build/main --photons 128 --mode E --beta0 -0.75
 make check              # 积分器、独立参考、测地线、散射位置及集合回归
-make benchmark          # 180例 × 6配置 × 5次计时，重写 results.csv/results.md
+make benchmark          # 180例 × 7配置（含fast）× 5次计时，重写 results.csv/results.md
 make benchmark-quick    # 12例快速检查
 python3 benchmark/replay_original.py  # 复核修改前源码
 ```
