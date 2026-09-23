@@ -55,7 +55,7 @@ print(text)
 
 # The experimental RK baselines are allowed to fail: exposing those failures
 # is the purpose of the comparison. Both event configurations must pass.
-event_rows = [r for r in rows if r['method'] in ('event', 'event_tight')]
+event_rows = [r for r in rows if r['method'] in ('event', 'event_tight', 'fast')]
 bad = [r for r in event_rows if r['status'] != 'ok' or
        not math.isfinite(float(r['relative_error'])) or float(r['relative_error']) > 1e-6]
 if bad:

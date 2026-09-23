@@ -13,6 +13,7 @@
 #include <queue>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 struct TransportOptions {
@@ -24,6 +25,10 @@ struct TransportOptions {
   // Fit scale in normalized geometrical-step coordinates; expose it so the
   // root-regularization bias can be checked independently of GK tolerance.
   double discriminant_fit_step = 2.5e-4;
+  // Fast mode omits only the exp(-u^2) Boltzmann tail beyond this landmark.
+  // +infinity disables this optimization for convergence checks.
+  double fast_tail_u = 12;
+  bool fast_split_field_knots = false;
   std::size_t max_geometry_steps = 200000;
   std::size_t max_quadrature_intervals = 8192;
 };
@@ -110,7 +115,7 @@ QuadratureValue kronrod15(Function const &fn, double a, double b,
   return {qk, error};
 }
 
-template<class Function>
+template<bool Fast = false, class Function>
 QuadratureValue integrate(Function const &fn, double atol, TransportOptions const &options,
                           TransportStats &stats) {
   struct Interval {
@@ -119,6 +124,9 @@ QuadratureValue integrate(Function const &fn, double atol, TransportOptions cons
     bool operator<(Interval const &other) const { return q.error < other.q.error; }
   };
   auto initial = kronrod15(fn, 0, 1, stats);
+  if constexpr (Fast)
+    if (initial.error <= atol + options.quadrature_rtol * std::abs(initial.integral))
+      return initial;
   std::priority_queue<Interval> intervals;
   intervals.push({0, 1, initial});
   double sum = initial.integral, error = initial.error;
@@ -179,11 +187,14 @@ struct Cut { double s; bool discriminant_root = false; bool magnetic_knot = fals
 
 // tau_target is an absolute accumulated optical depth; initial[3] is retained.
 // No RNG is used. A caller may pass -log(U) and scatter at the returned state.
-inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
+template<bool Fast>
+inline TransportResult transport_impl(PhotonEvolution const &photon, YVector initial,
                                  TransportOptions const &options = {},
                                  double tau_target = std::numeric_limits<double>::infinity(),
                                  double r_escape = 1000 * R_star) {
   using namespace resonance_transport_detail;
+  if constexpr (Fast) if (!(options.fast_tail_u >= 8))
+    throw std::invalid_argument("fast_tail_u must be at least 8 (or +infinity)");
   if (!(options.geometry_rtol > 0) || !(options.geometry_atol > 0) ||
       !(options.quadrature_rtol > 0) || !(options.quadrature_atol > 0) ||
       !(options.max_step_fraction > 0 && options.max_step_fraction <= .25) ||
@@ -205,18 +216,65 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
   }
   GeometryRHS rhs{result.stats};
   StepperDopr5<3, GeometryRHS> stepper(rhs, options.geometry_atol, options.geometry_rtol);
-  stepper.init(0, std::min(.01 * R_star, options.max_step_fraction * initial[0]),
+  ++result.stats.field_evaluations;
+  auto const radial_geometry = photon.geometry(initial, Fast);
+  // Restart at the local geometry scale. Resonance splitting already protects
+  // the optical-depth layer; two tiny startup steps after every scatter add no
+  // accuracy. The geometry RK error controller can reject this first proposal.
+  double first_step = Fast ? options.max_step_fraction * initial[0] :
+                                   std::min(.01 * R_star, options.max_step_fraction * initial[0]);
+  if constexpr (Fast) if (std::isfinite(tau_target)) {
+    double const initial_rate = photon.rate(radial_geometry);
+    if (initial_rate > 0)
+      first_step = std::min(first_step, 1.5*(tau_target-initial[3])/initial_rate);
+  }
+  stepper.init(0, first_step,
                {initial[0], initial[1], initial[2]});
 
-  // These are integration landmarks, not distribution cutoffs. Every interval
-  // from launch to termination is still integrated, including both tails.
+  // The reference path uses landmarks without clipping. Fast mode adds an
+  // explicit, configurable Boltzmann-tail boundary for skipping empty regions.
   std::vector<Surface> surfaces{{Surface::discriminant, 0}, {Surface::beta, 0},
                                 {Surface::radius, R_star}, {Surface::radius, r_escape}};
   for (double t : {.25, .5, 1., 2., 4., 8.}) {
+    if constexpr (Fast) {
+      if (t == .25 || t == .5 || t == 2) continue;
+      if (t == 8 && std::isfinite(options.fast_tail_u)) t = options.fast_tail_u;
+    }
     double const gm1 = t * t / photon.fb.a;
     double const beta = std::copysign(std::sqrt(gm1 * (gm1 + 2)) / (1 + gm1), photon.fb.b0);
     if (std::abs(beta) < 1) surfaces.push_back({Surface::beta, beta});
   }
+
+  // A radial ray keeps its angular field and direction fixed: do not rebuild
+  // a spherical basis or interpolate the same field at every quadrature node.
+  bool const radial = initial[2] == 0 || initial[2] == pi;
+  double const tail_gamma = std::isfinite(options.fast_tail_u) ?
+                            1 + options.fast_tail_u*options.fast_tail_u/photon.fb.a : 1;
+  double const tail_beta = std::copysign(std::sqrt((tail_gamma-1)*(tail_gamma+1))/tail_gamma,
+                                       photon.fb.b0);
+  auto in_population = [&](ResonanceGeometry const &g) {
+    if (!(g.discriminant > 0)) return false;
+    if (!std::isfinite(options.fast_tail_u)) return true;
+    double const edge = tail_gamma*(1-tail_beta*g.mu);
+    double lower = std::min(1., edge), upper = std::max(1., edge);
+    if (tail_beta*g.mu > 0 && std::abs(g.mu) < std::abs(tail_beta))
+      lower = std::sqrt((1-g.mu)*(1+g.mu));
+    return g.x >= lower && g.x <= upper;
+  };
+  auto locate = [&](auto const &fn, double a, double b, double fa, double fb) {
+    if constexpr (Fast) return zriddr(fn, a, b, 2 * std::numeric_limits<double>::epsilon());
+    else return root(fn, a, b, fa, fb);
+  };
+  auto rate = [&](ResonanceGeometry const &g) {
+    ++result.stats.rate_evaluations;
+    if constexpr (Fast) {
+      std::array<double, 2> betas{};
+      auto weights = photon.resonance_weights(g, photon.pol, betas);
+      return (weights[0] + weights[1]) * (photon.bfield.p + 1) * pi * g.current /
+             (std::abs(photon.fb.b_bar()) * g.r);
+    }
+    return photon.rate(g);
+  };
 
   for (std::size_t count = 0; count < options.max_geometry_steps; ++count) {
     stepper.h_old = std::min(stepper.h_old, options.max_step_fraction * stepper.y_old[0]);
@@ -236,25 +294,38 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
     };
     auto geometry = [&](double s) {
       ++result.stats.geometry_evaluations;
+      if constexpr (Fast) if (radial) {
+        auto g = radial_geometry;
+        g.r = state(s)[0];
+        g.x *= std::pow(initial[0]/g.r, 2+photon.bfield.p) *
+               std::sqrt((1-rs/g.r)/(1-rs/initial[0]));
+        g.discriminant = std::fma(g.x, g.x, (g.mu-1)*(g.mu+1));
+        return g;
+      }
       ++result.stats.field_evaluations;
-      return photon.geometry(state(s));
+      return photon.geometry(state(s), Fast);
     };
-    constexpr int probes = 8;
+    constexpr int probes = Fast ? 2 : 8;
     std::array<ResonanceGeometry, probes + 1> sample{}, minus{}, plus{};
     constexpr double derivative_delta = 1e-5;
     for (int i = 0; i <= probes; ++i) {
       double const s = double(i) / probes;
       sample[i] = geometry(s);
-      minus[i] = geometry(std::max(0., s - derivative_delta));
-      plus[i] = geometry(std::min(1., s + derivative_delta));
+      minus[i] = Fast && i == 0 ? sample[i] : geometry(std::max(0., s - derivative_delta));
+      plus[i] = Fast && i == probes ? sample[i] : geometry(std::min(1., s + derivative_delta));
     }
     std::vector<Cut> cuts{{0, false}, {1, false}};
     double stop = 1;
     bool stopped = false;
     TransportTermination stop_reason = TransportTermination::escaped;
+    std::vector<double> field_knots;
     auto add_cut = [&](double s, Surface const &surface) {
-      cuts.push_back({s, surface.kind == Surface::discriminant, surface.kind == Surface::magnetic_knot});
       ++result.stats.event_roots;
+      if (surface.kind == Surface::magnetic_knot) {
+        field_knots.push_back(s);
+        if constexpr (Fast) if (!options.fast_split_field_knots) return;
+      }
+      cuts.push_back({s, surface.kind == Surface::discriminant, surface.kind == Surface::magnetic_knot});
       if (surface.kind == Surface::radius && s > 16 * std::numeric_limits<double>::epsilon() &&
           s <= stop) {
         stop = s;
@@ -263,14 +334,36 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
                                               : TransportTermination::escaped;
       }
     };
+    bool possible = std::any_of(sample.begin(), sample.end(),
+                                 [](auto const &g) { return g.discriminant > 0; });
     auto find_surface = [&](Surface const &surface) {
-      auto fn = [&](double s) { return surface(geometry(s)); };
+      double const beta_sqrt = surface.kind == Surface::beta ?
+                              std::sqrt((1-surface.value)*(1+surface.value)) : 0;
+      auto value = [&](ResonanceGeometry const &g) {
+        if constexpr (Fast) {
+          if (surface.kind == Surface::discriminant && g.discriminant > 0) possible = true;
+          if (surface.kind == Surface::beta)
+            return std::fma(g.x, beta_sqrt, surface.value * g.mu - 1);
+        }
+        return surface(g);
+      };
+      auto fn = [&](double s) {
+        if constexpr (Fast) {
+          if (surface.kind == Surface::radius) return state(s)[0] - surface.value;
+          if (surface.kind == Surface::magnetic_knot) {
+            double psi = state(s)[1];
+            return photon.e1.z*std::cos(psi) + photon.e2.z*std::sin(psi) - surface.value;
+          }
+        }
+        return value(geometry(s));
+      };
       for (int i = 0; i < probes; ++i) {
         double const a = double(i) / probes, b = double(i + 1) / probes;
-        double const fa = surface(sample[i]), fb = surface(sample[i + 1]);
-        double const da = surface(plus[i]) - surface(minus[i]);
-        double const db = surface(plus[i + 1]) - surface(minus[i + 1]);
-        std::vector<double> local{a, b};
+        double const fa = value(sample[i]), fb = value(sample[i + 1]);
+        double const da = value(plus[i]) - value(minus[i]);
+        double const db = value(plus[i + 1]) - value(minus[i + 1]);
+        std::conditional_t<Fast, std::array<double,3>, std::vector<double>> local{a, b};
+        std::size_t local_size = 2;
         // Endpoint signs alone miss double crossings. Search a stationary point
         // whenever its derivative is bracketed by the geometrical probes.
         if (da * db < 0) {
@@ -290,20 +383,52 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
           }
           double const extreme = .5 * (lo + hi);
           local = {a, extreme, b};
+          local_size = 3;
           // Even without a zero this point may be a narrow near-tangent peak.
           cuts.push_back({extreme, false});
         }
-        for (std::size_t j = 1; j < local.size(); ++j) {
+        for (std::size_t j = 1; j < local_size; ++j) {
           double const l = local[j - 1], r = local[j];
           double const fl = l == a ? fa : fn(l), fr = r == b ? fb : fn(r);
           if (fl == 0) add_cut(l, surface);
           if (fr == 0) add_cut(r, surface);
           if (std::signbit(fl) != std::signbit(fr))
-            add_cut(root(fn, l, r, fl, fr), surface);
+            add_cut(locate(fn, l, r, fl, fr), surface);
         }
       }
     };
-    for (auto const &surface : surfaces) find_surface(surface);
+    if constexpr (Fast) {
+      find_surface(surfaces[0]); // D, including interior extrema
+      find_surface(surfaces[2]); // stellar surface
+      find_surface(surfaces[3]); // escape surface
+      if (!possible) {
+        result.distance = stepper.x_old + stop*h;
+        result.state = state(stop);
+        result.state[3] = result.tau;
+        if (stopped) { result.termination = stop_reason; return result; }
+        stepper.update_old();
+        continue;
+      }
+      for (auto const &surface : surfaces)
+        if (surface.kind == Surface::beta) find_surface(surface);
+    } else for (auto const &surface : surfaces) find_surface(surface);
+
+    if constexpr (Fast) {
+      std::sort(cuts.begin(), cuts.end(), [](Cut a, Cut b) { return a.s < b.s; });
+      bool active = false;
+      for (std::size_t j=1; j<cuts.size(); ++j) {
+        double a = cuts[j-1].s, b = std::min(stop, cuts[j].s);
+        if (b>a && in_population(geometry(.5*(a+b)))) { active = true; break; }
+      }
+      if (!active) {
+        result.distance = stepper.x_old + stop*h;
+        result.state = state(stop);
+        result.state[3] = result.tau;
+        if (stopped) { result.termination = stop_reason; return result; }
+        stepper.update_old();
+        continue;
+      }
+    }
 
     // Linear B-field interpolation has slope jumps. Splitting at table knots
     // prevents those harmless jumps from dominating adaptive quadrature error.
@@ -317,7 +442,7 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
          k <= int(std::floor((psi_hi - phase) / pi)); ++k) {
       double const target = phase + k * pi;
       auto psi_event = [&](double s) { return state(s)[1] - target; };
-      double const s = root(psi_event, 0, 1, psi_lo - target, psi_hi - target);
+      double const s = locate(psi_event, 0, 1, psi_lo - target, psi_hi - target);
       auto const g = geometry(s);
       muz_lo = std::min(muz_lo, g.muz);
       muz_hi = std::max(muz_hi, g.muz);
@@ -325,15 +450,27 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
     }
     double const dmu = (photon.bfield.mu_max - photon.bfield.mu_min) /
                        (photon.bfield.mu_num - 1);
-    if (dmu > 0 && muz_hi > muz_lo) {
+    std::vector<double> fold_latitudes;
+    if constexpr (Fast) if (!options.fast_split_field_knots)
+      for (auto const &cut : cuts)
+        if (cut.discriminant_root) fold_latitudes.push_back(geometry(cut.s).muz);
+    bool const need_knots = !Fast || options.fast_split_field_knots || !fold_latitudes.empty();
+    if (need_knots && dmu > 0 && muz_hi > muz_lo) {
       for (double sign : {-1., 1.}) {
         double const lo = sign > 0 ? muz_lo : -muz_hi;
         double const hi = sign > 0 ? muz_hi : -muz_lo;
         int const first = std::max(0, int(std::ceil((lo - photon.bfield.mu_min) / dmu)));
         int const last = std::min(photon.bfield.mu_num - 1,
                                  int(std::floor((hi - photon.bfield.mu_min) / dmu)));
-        for (int i = first; i <= last; ++i)
-          find_surface({Surface::magnetic_knot, sign * (photon.bfield.mu_min + i * dmu)});
+        for (int i = first; i <= last; ++i) {
+          double const knot = sign * (photon.bfield.mu_min + i * dmu);
+          // Without forced table splitting only the nearest knots on each
+          // side of a D root are needed to bound its local regularization fit.
+          if constexpr (Fast) if (!options.fast_split_field_knots &&
+              std::none_of(fold_latitudes.begin(), fold_latitudes.end(),
+                          [&](double mu) { return std::abs(mu-knot) <= 1.5*dmu; })) continue;
+          find_surface({Surface::magnetic_knot, knot});
+        }
       }
     }
     std::sort(cuts.begin(), cuts.end(), [](Cut a, Cut b) { return a.s < b.s; });
@@ -352,6 +489,7 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
     for (std::size_t j = 1; j < unique.size(); ++j) {
       double const a = unique[j - 1].s, b = unique[j].s;
       if (!(b > a)) continue;
+      if constexpr (Fast) if (!in_population(geometry(.5*(a+b)))) continue;
       auto const ga = geometry(a), gb = geometry(b);
       struct DiscriminantModel {
         bool active = false;
@@ -371,9 +509,9 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
         double const origin = unique[index].s;
         double bound = direction > 0 ? 1. : 0.;
         // The fit may cross thermal landmarks, but never interpolation knots.
-        for (auto const &cut : unique) {
-          if (!cut.magnetic_knot || (cut.s-origin)*direction <= 0) continue;
-          if ((cut.s-bound)*direction < 0) bound = cut.s;
+        for (double knot : field_knots) {
+          if ((knot-origin)*direction <= 0) continue;
+          if ((knot-bound)*direction < 0) bound = knot;
         }
         double const available = (bound-origin)*direction;
         if (!(available > 64*std::numeric_limits<double>::epsilon())) return model;
@@ -410,16 +548,38 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
             g.discriminant = left_model(left_offset);
           else if (right_model.active && right_offset < std::abs(right_model.delta))
             g.discriminant = right_model(-right_offset);
-          ++result.stats.rate_evaluations;
-          return photon.rate(g) * h * width * pi * sine * cosine;
+          return rate(g) * h * width * pi * sine * cosine;
         };
         double const atol = options.quadrature_atol * h * width / (4 * r_escape);
-        return integrate(integrand, atol, options, result.stats);
+        return integrate<Fast>(integrand, atol, options, result.stats);
       };
       auto const integral = segment_integral(b);
       if (result.tau + integral.integral >= tau_target) {
         double const wanted = tau_target - result.tau;
         double lo = a, hi = b;
+        if constexpr (Fast) {
+          // Safeguarded Newton inversion converges in a handful of integrals;
+          // stopping in optical depth matches the accuracy of the integral.
+          double s = a + (b-a) * wanted / integral.integral;
+          bool converged = false;
+          for (int it = 0; it < 48; ++it) {
+            double residual = segment_integral(s).integral - wanted;
+            if (std::abs(residual) <= options.quadrature_atol +
+                options.quadrature_rtol * wanted) { converged = true; break; }
+            if (residual < 0) lo = s; else hi = s;
+            double derivative = h * rate(geometry(s));
+            double next = s - residual/derivative;
+            if (!(next > lo && next < hi) || !std::isfinite(next)) next = .5*(lo+hi);
+            if (next == s) break;
+            s = next;
+          }
+          if (!converged) throw std::runtime_error("fast scattering inversion did not converge");
+          result.distance = stepper.x_old + s*h;
+          result.state = state(s);
+          result.tau = result.state[3] = tau_target;
+          result.termination = TransportTermination::scattered;
+          return result;
+        }
         // Invert the nonnegative integrated optical depth, never a DOPRI dense
         // polynomial in tau (which need not be monotone across a thin layer).
         for (int iteration = 0; iteration < 60; ++iteration) {
@@ -446,4 +606,19 @@ inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
     stepper.update_old();
   }
   throw std::runtime_error("resonance transport exceeded geometry step limit");
+}
+
+// Retain the original implementation for reproducible speed/accuracy comparisons.
+inline TransportResult transport(PhotonEvolution const &photon, YVector initial,
+                                 TransportOptions const &options = {},
+                                 double target = std::numeric_limits<double>::infinity(),
+                                 double outer = 1000*R_star) {
+  return transport_impl<false>(photon, initial, options, target, outer);
+}
+
+inline TransportResult transport_fast(PhotonEvolution const &photon, YVector initial,
+                                      TransportOptions const &options = {},
+                                      double target = std::numeric_limits<double>::infinity(),
+                                      double outer = 1000*R_star) {
+  return transport_impl<true>(photon, initial, options, target, outer);
 }

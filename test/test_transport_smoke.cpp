@@ -10,6 +10,13 @@
 #include <string>
 
 namespace {
+bool use_fast = false;
+TransportResult tested_transport(PhotonEvolution const &p, YVector y,
+                                 TransportOptions const &options = {},
+                                 double target = std::numeric_limits<double>::infinity(),
+                                 double outer = 1000*R_star) {
+  return use_fast ? transport_fast(p,y,options,target,outer) : transport(p,y,options,target,outer);
+}
 void require(bool condition, std::string const &message) {
   if (!condition) throw std::runtime_error(message);
 }
@@ -34,13 +41,13 @@ void test_scattering_locations(BField const &field, double muz, Polarization mod
   constexpr double outer = 1000 * R_star;
   auto const reference = resonance_reference::radial(field, distribution, rs, photon, outer, 1e-11);
   double const tolerance = 1e-6 * std::max(1.0, reference.tau);
-  auto const full = transport(physics, initial, {}, std::numeric_limits<double>::infinity(), outer);
+  auto const full = tested_transport(physics, initial, {}, std::numeric_limits<double>::infinity(), outer);
   require(full.termination == TransportTermination::escaped, "radial ray did not escape");
   near(full.tau, reference.tau, tolerance, "full radial tau disagrees with independent reference");
   double last_radius = R_star;
   for (double fraction : {.1, .5, .9}) {
     double const target = fraction * reference.tau;
-    auto const stopped = transport(physics, initial, {}, target, outer);
+    auto const stopped = tested_transport(physics, initial, {}, target, outer);
     require(stopped.termination == TransportTermination::scattered,
             "finite optical-depth target failed to produce scattering event");
     near(stopped.tau, target, 1e-14 * std::max(1.0, target), "reported target optical depth");
@@ -56,16 +63,16 @@ void test_scattering_locations(BField const &field, double muz, Polarization mod
             "scattering event located outside supported resonance layer");
     if (fraction == .5) {
       // Check both retained and reset tau offsets when restarting inside a layer.
-      auto const continued = transport(physics, stopped.state, {},
+      auto const continued = tested_transport(physics, stopped.state, {},
                                         std::numeric_limits<double>::infinity(), outer);
       near(continued.tau, reference.tau, 2 * tolerance, "continued accumulated tau lost additivity");
       YVector tail_initial = stopped.state;
       tail_initial[3] = 0;
-      auto const tail = transport(physics, tail_initial, {},
+      auto const tail = tested_transport(physics, tail_initial, {},
                                   std::numeric_limits<double>::infinity(), outer);
       near(prefix.tau + tail.tau, reference.tau, 2 * tolerance,
            "independent prefix plus restarted tail lost additivity");
-      auto const first = transport(physics, initial, {},
+      auto const first = tested_transport(physics, initial, {},
                                    std::numeric_limits<double>::infinity(), stopped.state[0]);
       require(first.termination == TransportTermination::escaped,
               "finite radial segment failed to reach its outer boundary");
@@ -89,7 +96,7 @@ void test_cold_fold(BField const &field) {
   tight.quadrature_atol = 1e-10;
   for (double fit_step : {2.5e-4, 1.25e-4}) {
     tight.discriminant_fit_step = fit_step;
-    auto value = transport(physics, physics.r_psi_alpha_tau, tight);
+    auto value = tested_transport(physics, physics.r_psi_alpha_tau, tight);
     near(value.tau, exact.tau, 1e-7 * exact.tau, "cold E fold / fit-scale convergence");
   }
 }
@@ -106,7 +113,7 @@ void test_short_ensemble(BField const &field) {
     bool terminated = false;
     for (unsigned segment = 0; segment < 256; ++segment) {
       double const target = -std::log(random.U_open());
-      auto const result = transport(physics, physics.r_psi_alpha_tau, {}, target);
+      auto const result = tested_transport(physics, physics.r_psi_alpha_tau, {}, target);
       for (double value : result.state)
         require(std::isfinite(value), "photon ensemble produced non-finite transport state");
       require(result.distance >= 0 && std::isfinite(result.distance) && result.tau >= 0 &&
@@ -147,12 +154,15 @@ void test_short_ensemble(BField const &field) {
 int main() {
   try {
     BField field("table/bfield_t10.txt", B_pole, R_star);
+    for (bool fast : {false, true}) {
+    use_fast = fast;
     test_scattering_locations(field, -.2, Polarization::O);
     test_scattering_locations(field, -.2, Polarization::E);
     test_scattering_locations(field, 0, Polarization::E);
     test_scattering_locations(field, 0, Polarization::E, -.001);
     test_cold_fold(field);
     test_short_ensemble(field);
+    }
     std::cout << "Transport smoke tests passed\n";
     return 0;
   } catch (std::exception const &error) {

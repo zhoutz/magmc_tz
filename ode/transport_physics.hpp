@@ -22,6 +22,7 @@ using YVector = std::array<double, 4>;
 struct ResonanceGeometry {
   double r, mu, x, discriminant, muz;
   double3 r_hat, b_cart;
+  double current = 0; // Optional cached Bphi/Btheta, used by fast transport.
 };
 
 struct PhotonEvolution {
@@ -43,12 +44,13 @@ struct PhotonEvolution {
     dydx[3] = calc_dtaudl(n, e1, e2, r, psi, alpha, omega_inf, pol);
   }
 
-  ResonanceGeometry geometry(YVector const &y) const {
-    return geometry(n, e1, e2, y[0], y[1], y[2], omega_inf);
+  ResonanceGeometry geometry(YVector const &y, bool cache_current = false) const {
+    return geometry(n, e1, e2, y[0], y[1], y[2], omega_inf, cache_current);
   }
 
   ResonanceGeometry geometry(double3 plane_n, double3 plane_e1, double3 plane_e2,
-                            double r, double psi, double alpha, double energy) const {
+                            double r, double psi, double alpha, double energy,
+                            bool cache_current = false) const {
     if (!(r > rs) || !(energy > 0) || !std::isfinite(energy))
       throw std::runtime_error("Invalid photon radius or energy");
     double3 r_hat = to_unit(std::cos(psi) * plane_e1 + std::sin(psi) * plane_e2);
@@ -64,7 +66,8 @@ struct PhotonEvolution {
     double3 k = std::cos(alpha) * r_hat + std::sin(alpha) * cross(plane_n, r_hat);
     double mu = std::clamp(dot(k, b_cart), -1.0, 1.0);
     double x = B_to_omega * B * std::sqrt(1 - rs / r) / energy;
-    return {r, mu, x, std::fma(x, x, (mu - 1) * (mu + 1)), muz, r_hat, b_cart};
+    double current = cache_current && B_sph.y != 0 ? B_sph.z / B_sph.y : 0;
+    return {r, mu, x, std::fma(x, x, (mu - 1) * (mu + 1)), muz, r_hat, b_cart, current};
   }
 
   std::array<double, 2> resonance_weights(ResonanceGeometry const &g,

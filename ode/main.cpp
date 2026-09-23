@@ -40,7 +40,7 @@ TransportResult coupled_flight(PhotonEvolution const &physics, double target,
 
 int main(int argc, char **argv) {
   try {
-    std::string method = "event";
+    std::string method = "fast";
     int photons = 1;
     unsigned long long seed = 1234;
     double beta0 = -.75, energy = 1;
@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
       if (arg == "--help") {
-        std::cout << "Run from project root. Options: --method event|thermal|cap|rk "
+        std::cout << "Run from project root. Options: --method fast|event|thermal|cap|rk "
                      "--photons N --seed N --beta0 B --energy keV --mode O|E\n";
         return 0;
       }
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
       else throw std::invalid_argument("unknown option or mode: " + arg);
     }
     if (photons < 1 || !(energy > 0) || !std::isfinite(energy) ||
-        (method != "event" && method != "thermal" && method != "cap" && method != "rk"))
+        (method != "fast" && method != "event" && method != "thermal" && method != "cap" && method != "rk"))
       throw std::invalid_argument("invalid simulation options");
     BField field("table/bfield_t10.txt", B_pole, R_star);
     Boltzmann distribution(beta0);
@@ -79,7 +79,8 @@ int main(int argc, char **argv) {
       bool done = false;
       for (int interactions = 0; interactions < 100000; ++interactions) {
         double target = -std::log(random.U_open());
-        auto result = method == "event" ? transport(physics, physics.r_psi_alpha_tau, {}, target)
+        auto result = method == "fast" ? transport_fast(physics, physics.r_psi_alpha_tau, {}, target) :
+                      method == "event" ? transport(physics, physics.r_psi_alpha_tau, {}, target)
                                         : coupled_flight(physics, target, method);
         if (photons == 1) {
           std::cout << (result.termination == TransportTermination::scattered ? "scattered" :
