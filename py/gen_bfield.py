@@ -10,7 +10,7 @@ def solve_twisted_dipole(
     mu_out: np.ndarray,
     eps=1e-5,
     n_mesh=int(1e3),
-    n_cont=100,
+    n_cont=20,
     tol=1e-8,
     max_nodes=int(1e5),
     verbose=False,
