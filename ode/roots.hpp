@@ -1,54 +1,5 @@
 #pragma once
 
-#if 0
-
-#include <cmath>
-#include <stdexcept>
-
-template <class F> double zriddr(F const &func, double x1, double x2, double xacc) {
-  constexpr int MAXIT = 60;
-  double fl = func(x1);
-  double fh = func(x2);
-  if ((fl > 0.0 && fh < 0.0) || (fl < 0.0 && fh > 0.0)) {
-    double xl = x1;
-    double xh = x2;
-    double ans = -9.99e99;
-    for (int j = 0; j < MAXIT; j++) {
-      double xm = 0.5 * (xl + xh);
-      double fm = func(xm);
-      double s = std::sqrt(fm * fm - fl * fh);
-      if (s == 0.0) return ans;
-      double xnew = xm + (xm - xl) * ((fl >= fh ? 1.0 : -1.0) * fm / s);
-      if (std::abs(xnew - ans) <= xacc) return ans;
-      ans = xnew;
-      double fnew = func(ans);
-      if (fnew == 0.0) return ans;
-      if (std::copysign(fm, fnew) != fm) {
-        xl = xm;
-        fl = fm;
-        xh = ans;
-        fh = fnew;
-      } else if (std::copysign(fl, fnew) != fl) {
-        xh = ans;
-        fh = fnew;
-      } else if (std::copysign(fh, fnew) != fh) {
-        xl = ans;
-        fl = fnew;
-      } else {
-        throw std::runtime_error("never get here.");
-      }
-      if (std::abs(xh - xl) <= xacc) return ans;
-    }
-    throw std::runtime_error("zriddr exceed maximum iterations");
-  } else {
-    if (fl == 0.0) return x1;
-    if (fh == 0.0) return x2;
-    throw std::runtime_error("root must be bracketed in zriddr.");
-  }
-}
-
-#else
-
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -57,10 +8,18 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
 template <class F> double zriddr(F const &func, double x1, double x2, double xacc) {
   constexpr int MAXIT = 128;
 
+  if (!std::isfinite(x1) || !std::isfinite(x2) || !std::isfinite(xacc) || xacc < 0.0)
+    throw std::invalid_argument("Invalid interval or tolerance in zriddr");
+  auto evaluate = [&](double x) {
+    double value = func(x);
+    if (!std::isfinite(value)) throw std::runtime_error("Non-finite function value in zriddr");
+    return value;
+  };
+
   double xl = std::min(x1, x2);
   double xh = std::max(x1, x2);
-  double fl = func(xl);
-  double fh = func(xh);
+  double fl = evaluate(xl);
+  double fh = evaluate(xh);
 
   if (fl == 0.0) return xl;
   if (fh == 0.0) return xh;
@@ -84,7 +43,7 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
     // 区间足够小，或已无可表示的内部浮点数。
     if (xm == xl || xm == xh || std::max(xm - xl, xh - xm) <= xacc) return xm;
 
-    const double fm = func(xm);
+    const double fm = evaluate(xm);
     if (fm == 0.0) return xm;
 
     const double scale = std::max({std::abs(fl), std::abs(fh), std::abs(fm)});
@@ -107,7 +66,7 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
 
     // 候选点严格位于剩余括根区间内才使用。
     if (xl < xn && xn < xh) {
-      const double fn = func(xn);
+      const double fn = evaluate(xn);
       if (fn == 0.0) return xn;
 
       update_bracket(xn, fn);
@@ -116,5 +75,3 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
 
   throw std::runtime_error("zriddr exceeded maximum iterations");
 }
-
-#endif

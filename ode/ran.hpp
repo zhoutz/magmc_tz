@@ -34,6 +34,12 @@ struct Ran {
 
   double U() { return 5.42101086242752217E-20 * (double)int64(); }
 
+  double U_open() {
+    double u;
+    do { u = U(); } while (!(u > 0 && u < 1));
+    return u;
+  }
+
   double U(double min, double max) { return min + (max - min) * U(); }
 
   double N() {
