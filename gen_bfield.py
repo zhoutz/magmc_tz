@@ -8,10 +8,10 @@ from scipy.integrate import solve_bvp
 def solve_twisted_dipole(
     delta_phi: float,
     mu_out: np.ndarray,
-    eps=1e-5,
-    n_mesh=1000,
-    n_cont=10,
-    tol=1e-6,
+    eps=1e-10,
+    n_mesh=10000,
+    n_cont=100,
+    tol=1e-5,
     max_nodes=50000,
     verbose=False,
 ):
@@ -66,6 +66,8 @@ def solve_twisted_dipole(
 
     mu_max = 1.0 - eps
     x = np.linspace(0.0, mu_max, n_mesh)
+    # t = np.linspace(0, 1, n_mesh)
+    # x = mu_max * (3 * t**2 - 2 * t**3)
 
     # Initial guess: dipole field.
     f0 = 1.0 - x**2
@@ -76,7 +78,7 @@ def solve_twisted_dipole(
     pA_init = np.array([1.0, max(delta_phi / 2.0, 1e-8)])
 
     n_cont = max(
-        n_cont, 4, int(np.ceil(delta_phi / 0.1))
+        n_cont, 4, int(np.ceil(delta_phi / 0.05))
     )  # at least 4 steps, or more for large delta_phi
 
     for istep, target_delta_phi in enumerate(
@@ -91,16 +93,13 @@ def solve_twisted_dipole(
             denom = 1.0 - mu**2
 
             df = y[1]
-
             dg = -p * (p + 1.0) * (y[0] + A * A * f_pos ** (1.0 + 2.0 / p)) / denom
-
             dJ = f_pos ** (1.0 / p) / denom
 
             return np.vstack([df, dg, dJ])
 
-        def bc(ya, yb, pars):
+        def bc(ya, yb, pars, target_delta_phi=target_delta_phi):
             p, A = pars
-
             s = eps
 
             # Polar expansion at mu = 1 - eps.
@@ -176,7 +175,7 @@ if __name__ == "__main__":
     target_delta_phi = 1.0  # radians
     mu_min = 0.0
     mu_max = 1.0
-    mu_num = 1001
+    mu_num = 10001
 
     mu_grid = np.linspace(mu_min, mu_max, mu_num)
     output_path = f"table/bfield_t{int(target_delta_phi * 10):02d}.txt"
