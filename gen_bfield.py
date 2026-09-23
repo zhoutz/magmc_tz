@@ -8,11 +8,11 @@ from scipy.integrate import solve_bvp
 def solve_twisted_dipole(
     delta_phi: float,
     mu_out: np.ndarray,
-    eps=1e-10,
-    n_mesh=10000,
+    eps=1e-4,
+    n_mesh=int(1e3),
     n_cont=100,
-    tol=1e-5,
-    max_nodes=50000,
+    tol=1e-7,
+    max_nodes=int(1e5),
     verbose=False,
 ):
     """
@@ -26,6 +26,8 @@ def solve_twisted_dipole(
         Grid points where f and f' are returned. mu = cos(theta), 0 <= mu <= 1.
     eps : float
         Solve on [0, 1 - eps] and use the polar expansion near mu = 1.
+        Keep this away from machine precision: too small a cutoff causes
+        roundoff and excessive mesh refinement near the pole.
     n_mesh : int
         Initial collocation mesh size.
     n_cont : int
@@ -40,11 +42,14 @@ def solve_twisted_dipole(
     Return
     ------
     dict with keys:
-        p, A, C, mu, f, fp, sol
+        p, A, C, mu, f, fp
     """
 
     if delta_phi < 0:
         raise ValueError("This routine assumes delta_phi >= 0.")
+
+    if not 0.0 < eps < 1.0 or 1.0 - eps == 1.0:
+        raise ValueError("eps must satisfy 0 < eps < 1 and 1 - eps < 1.")
 
     mu_out = np.asarray(mu_out, dtype=np.float64)
 
@@ -66,20 +71,18 @@ def solve_twisted_dipole(
 
     mu_max = 1.0 - eps
     x = np.linspace(0.0, mu_max, n_mesh)
-    # t = np.linspace(0, 1, n_mesh)
-    # x = mu_max * (3 * t**2 - 2 * t**3)
 
     # Initial guess: dipole field.
-    f0 = 1.0 - x**2
+    f0 = (1.0 - x) * (1.0 + x)
     g0 = -2.0 * x
     J0 = x.copy()
 
     y_init = np.vstack([f0, g0, J0])
-    pA_init = np.array([1.0, max(delta_phi / 2.0, 1e-8)])
-
     n_cont = max(
         n_cont, 4, int(np.ceil(delta_phi / 0.05))
     )  # at least 4 steps, or more for large delta_phi
+    # Match the first continuation target, not the final twist angle.
+    pA_init = np.array([1.0, delta_phi / (2.0 * n_cont)])
 
     for istep, target_delta_phi in enumerate(
         np.linspace(delta_phi / n_cont, delta_phi, n_cont)
@@ -90,7 +93,7 @@ def solve_twisted_dipole(
 
             # Avoid invalid fractional powers from tiny negative numerical noise.
             f_pos = np.maximum(y[0], 1e-300)
-            denom = 1.0 - mu**2
+            denom = (1.0 - mu) * (1.0 + mu)
 
             df = y[1]
             dg = -p * (p + 1.0) * (y[0] + A * A * f_pos ** (1.0 + 2.0 / p)) / denom
@@ -134,14 +137,21 @@ def solve_twisted_dipole(
             print(
                 f"step {istep + 1}/{n_cont}, "
                 f"target={target_delta_phi:.6g}, success={sol.success}, "
-                f"p={sol.p[0]:.12g}, A={sol.p[1]:.12g}"
+                f"p={sol.p[0]:.12g}, A={sol.p[1]:.12g}, "
+                f"nodes={sol.x.size}, max_residual={np.max(sol.rms_residuals):.3g}"
             )
 
         if not sol.success:
-            raise RuntimeError(sol.message)
+            raise RuntimeError(
+                f"Continuation step {istep + 1}/{n_cont}, "
+                f"target={target_delta_phi:.6g}: {sol.message} "
+                f"nodes={sol.x.size}, "
+                f"max_residual={np.max(sol.rms_residuals):.3g}, eps={eps:.3g}. "
+            )
 
-        # Continuation: use this solution as the next initial guess.
-        y_init = sol.sol(x)
+        # Retain the adaptive mesh as well as the converged solution.
+        x = sol.x
+        y_init = sol.y
         pA_init = sol.p
 
     p, A = sol.p
@@ -172,7 +182,7 @@ def solve_twisted_dipole(
 
 
 if __name__ == "__main__":
-    target_delta_phi = 1.0  # radians
+    target_delta_phi = 3.0  # radians
     mu_min = 0.0
     mu_max = 1.0
     mu_num = 10001
@@ -201,3 +211,16 @@ if __name__ == "__main__":
         )
         f.writelines(f"{out['f'][i]:.16e} {out['fp'][i]:.16e}\n" for i in range(n))
     print(f"Table saved to {output_path}")
+
+    if True:
+        import matplotlib.pyplot as plt
+
+        plt.plot(out["mu"], out["f"], label=r"f($\mu$)")
+        plt.plot(out["mu"], out["fp"], label=r"f'($\mu$)")
+        plt.xlabel(r"$\mu$")
+        plt.ylabel("f, f'")
+        plt.title(f"Twisted Dipole: $\\Delta\\phi$={target_delta_phi:.3g} rad")
+        plt.legend()
+        plt.grid()
+        plt.savefig(f"table/bfield_t{int(target_delta_phi * 10):02d}.png", dpi=400)
+        print(f"Plot saved to table/bfield_t{int(target_delta_phi * 10):02d}.png")

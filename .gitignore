@@ -2,6 +2,7 @@ table/
 build/
 article/
 .vscode/
+__pycache__/
 
 *.out
 *.txt
