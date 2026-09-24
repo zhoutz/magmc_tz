@@ -103,7 +103,12 @@ template <int N, class DerivFunc> struct StepperDopr5 {
     }
   }
 
-  void do_step() {
+  // A physics-based cap must apply before sampling the next step, even when
+  // the previous derivative and its embedded error estimate were both zero.
+  // The magnitude cap also supports backward integration; retries only shrink.
+  void do_step(double max_step = std::numeric_limits<double>::infinity()) {
+    if (!(max_step > 0)) throw std::invalid_argument("max_step must be positive");
+    h_old = std::copysign(std::min(std::abs(h_old), max_step), h_old);
     while (true) {
       if (std::abs(h_old) <= std::abs(x_old) * EPS) {
         throw std::runtime_error("stepsize underflow in StepperDopr5");

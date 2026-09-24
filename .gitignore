@@ -1,6 +1,7 @@
 table/
 build/
 article/
+output/
 .vscode/
 __pycache__/
 
