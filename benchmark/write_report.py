@@ -1,146 +1,179 @@
 #!/usr/bin/env python3
-"""Summarize saved measurements without rerunning or changing the reference."""
+"""Generate the final report from saved data, without changing any input table."""
 import csv
 import json
+import math
 from pathlib import Path
 import statistics
 
 OUT=Path(__file__).resolve().parent
 summary=json.loads((OUT/'summary.json').read_text())
 
-def pick(method,tolerance=1e-6,parameter=.01,initial=.01):
-    return next(s for s in summary if s['method']==method and float(s['tolerance'])==tolerance and float(s['parameter'])==parameter and float(s['initial_step'])==initial)
-
-def rows(s):
-    with (OUT/s['file']).open() as f:
-        next(f)
+def read(path,metadata=False):
+    with (OUT/path).open() as f:
+        if metadata:next(f)
         return list(csv.DictReader(f))
+
+def pick(name,tol=1e-6,p=None,h=.01):
+    if p is None:p=.01 if name=='ft07' else .1
+    return next(x for x in summary if x['method']==name and float(x['tolerance'])==tol and float(x['parameter'])==p and float(x['initial_step'])==h)
 
 def save(name,data):
     with (OUT/name).open('w',newline='') as f:
-        w=csv.DictWriter(f,fieldnames=data[0].keys());w.writeheader();w.writerows(data)
+        w=csv.DictWriter(f,fieldnames=data[0]);w.writeheader();w.writerows(data)
 
-labels={'baseline':'原 DOPRI5','ft07':'FT07 限制器 + DOPRI5（截断 99.8%）','thermal_cap':'温度 log(x) 限制器 + DOPRI5','spatial_regularized':'空间正则化 + 预置区间','velocity':'显式支撑区间的速度积分'}
-primary=[]
-for name in labels:
-    s=pick(name)
-    primary.append(f"| {labels[name]} | {float(s['batch_median_ms']):.3f} | {s['max_relative']:.6g} | {s['p95_relative']:.3g} | {s['above_1e3']} | {s['mean_evaluations']:.1f} |")
+names=['baseline','ft07','phase_cap','event_guard']
+labels=['原四维 DOPRI5','FT07 控制器＋通用边界处理','共振变量变化限制器','步内共振边界定位（推荐）']
+table=[];probability=[]
+for name,label in zip(names,labels):
+    s=pick(name);data=read(s['file'],True)
+    dp=max(abs(math.expm1(-float(r['tau']))-math.expm1(-float(r['reference']))) for r in data if r['status']=='ok')
+    probability.append(dict(method=name,maximum_absolute_probability_error=dp))
+    table.append(f"| {label} | {float(s['batch_median_ms']):.3f} | {s['maximum_relative']:.7g} | {s['p95_relative']:.3g} | {s['missed_90pct']} | {s['mean_steps']:.1f} |")
+save('scattering_probability_errors.csv',probability)
 
-convergence=[]
-for name in labels:
-    for tol in [1e-6,1e-7,1e-8,1e-10]:
-        s=pick(name,tol)
-        convergence.append(f"| {name} | {tol:.0e} | {float(s['batch_median_ms']):.3f} | {s['max_relative']:.6g} | {s['missed_90pct']} | {s['failures']} |")
+angles=read('angular_validation.csv');angle_summary=[]
+for name in names[1:]:
+    data=[r for r in angles if r['method']==name]
+    angle_summary.append(dict(method=name,cases=len(data),failures=sum(r['status']!='ok' for r in data),
+        maximum_relative=max(float(r['relative_error']) for r in data),
+        single_pass_ms=sum(float(r['ms']) for r in data),
+        escaped=sum(r['outcome']=='0' for r in data),surface=sum(r['outcome']=='1' for r in data),
+        turned=sum(int(r['turns'])>0 for r in data),both_branches=sum(int(r['double_branches'])>0 for r in data),
+        caustics=sum(int(r['caustics'])>0 for r in data),multiple_crossings=sum(int(r['caustics'])>=2 for r in data)))
+save('angular_summary.csv',angle_summary)
+guard=next(r for r in angle_summary if r['method']=='event_guard')
 
-with (OUT/'ft07_truncation.csv').open() as f:trunc=list(csv.DictReader(f))
-decomposition=[]
-for tol in [1e-6,1e-8,1e-10]:
-    numeric=rows(pick('ft07',tol))
-    for n,t in zip(numeric,trunc):
-        decomposition.append(dict(tolerance=tol,**{k:n[k] for k in ['b0','muz','pol','omega_inf']},
-            tau=n['tau'],truncated_reference=t['truncated'],
-            relative_to_truncated=abs(float(n['tau'])-float(t['truncated']))/float(t['truncated']),
-            truncation_fraction=t['omitted_fraction']))
-save('ft07_error_decomposition.csv',decomposition)
-decomp_max={tol:max(d['relative_to_truncated'] for d in decomposition if d['tolerance']==tol) for tol in [1e-6,1e-8,1e-10]}
+decomp=read('ft07_decomposition.csv');ft=read(pick('ft07')['file'],True)
+max_cut=max(float(r['omitted_fraction']) for r in decomp)
+max_ft_num=max(abs(float(a['tau'])-float(b['truncated']))/max(1e-12,float(b['truncated'])) for a,b in zip(ft,decomp))
+full_angle={(r['id'],r['pol']):float(r['reference']) for r in angles if r['method']=='event_guard'}
+ft_angle_bias=max((full_angle[(r['id'],r['pol'])]-float(r['reference']))/full_angle[(r['id'],r['pol'])] for r in angles if r['method']=='ft07' and full_angle[(r['id'],r['pol'])]>1e-6)
 
-best=rows(pick('spatial_regularized',1e-10))
-discrepancies=sorted([r for r in best if float(r['rel_error'])>1e-8],key=lambda r:float(r['rel_error']),reverse=True)
+guard_rows=read(pick('event_guard')['file'],True)
+discrepancies=sorted([r for r in guard_rows if float(r['rel_error'])>1e-7],key=lambda r:float(r['rel_error']),reverse=True)
 save('reference_discrepancies.csv',discrepancies)
-worst=discrepancies[0]
+worst=max(guard_rows,key=lambda r:float(r['rel_error']))
+validation=json.loads((OUT/'transport_validation_summary.json').read_text())
+scan=[]
+for s in summary:
+    scan.append(f"| {s['method']} | {float(s['tolerance']):.0e} | {float(s['parameter']):g} | {float(s['initial_step']):g} | {float(s['batch_median_ms']):.3f} | {s['maximum_relative']:.7g} | {s['missed_90pct']} | {s['failures']} |")
+angular_table=[]
+for a in angle_summary:
+    angular_table.append(f"| {a['method']} | {a['cases']} | {a['maximum_relative']:.7g} | {a['single_pass_ms']:.3f} | {a['failures']} |")
 
-stability=[]
-for name in ['spatial_regularized','velocity']:
-    tight=rows(pick(name,1e-10))
-    for tol in [1e-6,1e-7,1e-8]:
-        coarse=rows(pick(name,tol))
-        stability.append(dict(method=name,tolerance=tol,relative_change_to_1e10=max(abs(float(a['tau'])-float(b['tau']))/abs(float(b['tau'])) for a,b in zip(coarse,tight))))
-save('quadrature_convergence.csv',stability)
+report=fr'''# 任意方向共振光深积分：最终报告
 
-v=dict(line.split('=',1) for line in (OUT/'validation_summary.txt').read_text().splitlines())
-thermal=pick('thermal_cap',1e-8);spatial=pick('spatial_regularized',1e-8)
-env=json.loads((OUT/'environment.json').read_text())
+**已删除上次所有径向专用算法。当前推荐并接入 `src/main.cpp` 的是通用的“步内共振边界定位”方法。** 它沿原有 Schwarzschild 光子轨道演化，逐点计算光子–磁场夹角，不要求 r 单调、μ 不变，也不使用共振半径反演。main 中 α=0 只用于运行用户原有的径向参数网格；实际积分器对 α、方位角、半球和传播方向使用同一套代码。
 
-report=f'''# 共振层漏积分：结果与建议
+本次比较原程序、通用化 FT07 控制器以及两种新策略，共 {len(summary)} 组配置，每组与原表的 900 例比较。原始 `table/bench_od.txt`、`py/bench_od.py` 和磁场表均未修改。
 
-已完成五种方法的独立 C++ benchmark 和 31 组参数配置；每组均与原始 900 行参考表逐行比较。**当前向外径向程序推荐使用空间正则化与预置区间方法，已接入 `src/main.cpp`。** 原轨道方程移至 `src/photon_evolution.hpp`，原始算法可由 `benchmark/baseline.cpp` 重现。一般非径向传播、南半球双共振分支以及多次进出共振层不在本次验证范围内。
+## 900 例精度与效率
 
-## 主要结果
+下表为 tolerance=10⁻⁶、初始 proper-path 步长 0.01 km。FT07 使用论文的 0.01 系数；两种新策略默认参数为 0.1。时间是一次完整 900 例计算的 **5 次中位数，单位 ms**，不包含编译和文件 I/O。平台是 Apple arm64 / macOS，GCC 16.2.0，`-O3 -std=c++23`，无 fast-math；详见 [environment.json](environment.json)。
 
-以下均为 nominal tolerance=10⁻⁶，FT07/温度限制器参数 0.01、初始 proper-path 步长 0.01 km。DOPRI 使用 `atol=rtol=tol`；求积使用 `atol=0.1 tol, rtol=tol`，这不是完全相同的误差范数，因此下面另列实测精度相近的比较。时间是预热后 **7 批、每批全部 900 例** 的中位数，不是单例耗时，单位 ms。运行平台 `{env['machine']}`，GCC 16.2.0，`-O3 -std=c++23`，无 fast-math。具体环境与输入 SHA256 见 [environment.json](environment.json)。
-
-| 方法 | 900 例耗时/ms | 最大相对误差 | P95 相对误差 | 误差 >0.1% 的例数 | 平均函数评估数 |
+| 方法 | 900 例耗时/ms | 最大相对误差 | P95 相对误差 | 低估超过 90% 的例数 | 平均接受步数 |
 |---|---:|---:|---:|---:|---:|
-{chr(10).join(primary)}
+{chr(10).join(table)}
 
-上述五组均无程序异常。函数评估的含义因方法不同而不同，不能当作等价成本：DOPRI 是四维 RHS，求积是 integrand，后者不包含根求解工作；实际时间包含每例几何准备和根求解。
+三种修复方案在全部配置中均无异常，也没有严重漏层。两种新策略保留完整粒子分布；FT07 保留论文的中央 99.8% 分布。相同 tolerance 不是相同的全局误差保证：原程序的误差控制用于四维 DOPRI5，修复方案分别控制几何和光深求积，实际精度必须以表中实测值判断。
 
-在实测精度相近时，温度限制器 `tol=10⁻⁸` 的最大误差 {thermal['max_relative']:.6g}、耗时 {float(thermal['batch_median_ms']):.3f} ms；空间正则化 `tol=10⁻⁸` 的最大误差 {spatial['max_relative']:.6g}、耗时 {float(spatial['batch_median_ms']):.3f} ms，约快 **{float(thermal['batch_median_ms'])/float(spatial['batch_median_ms']):.1f} 倍**。这部分优势也来自利用径向几何的不变量，以及无需继续积分共振层外至 10000 km 的零 opacity 区域，不能全部归因于步长策略。
+在对表最大误差相近时，默认边界定位方法比默认共振变量限制器快 **{float(pick('phase_cap')['batch_median_ms'])/float(pick('event_guard')['batch_median_ms']):.2f} 倍**，比采用相同边界处理基础的 FT07 控制器快 **{float(pick('ft07')['batch_median_ms'])/float(pick('event_guard')['batch_median_ms']):.2f} 倍**。新方法比未保护的原程序慢，但原程序的较小成本伴随 27 例严重漏积分。这里没有沿用上次径向专用求积的耗时。
 
-## 漏层与 FT07 对照
+原程序最直观的失败仍是 β₀=−0.1、μz=0、E 模、ω∞=0.01：参考 τ≈10.0904，而原程序约为 1.28×10⁻²⁴。嵌入式误差估计无法识别所有 stage 都未采到的共振层。
 
-原程序 `tol=10⁻⁶` 下有 27 例低估超过 90%。例如 β₀=−0.1、μz=0、E 模、ω∞=0.01：参考 τ=10.090418511430368，原程序 τ≈1.2832×10⁻²⁴。所有 stage 都未采到层内时，嵌入误差接近零，局部误差控制不会自动发现遗漏。
+将光深转换成散射概率 `P=1−exp(−τ)` 后，推荐方法在 900 例中的最大绝对概率误差为 {probability[-1]['maximum_absolute_probability_error']:.7g}。全部方法的概率误差见 [scattering_probability_errors.csv](scattering_probability_errors.csv)。
 
-FT07 是最先实现和运行的修复对照。按论文 §3.4 保留中央 99.8% 的粒子，按式 (39) 限制动量相对步长、按式 (31) 转换为空间步长、按式 (38) 限制根合并附近的步长；光深积分仍用原 DOPRI5，物理归一化和 GR 修正沿用 note。具体适配和经验规则见 [ALGORITHMS.md](ALGORITHMS.md)。它不是论文完整 Monte Carlo 程序的复刻。
+## 为什么这些方法适用于非径向光线
 
-对完全相同的截断速度区间独立积分后，发现**只截掉 0.2% 粒子即可损失最多 {float(v['max_FT07_truncated_fraction'])*100:.6f}% 光深**，因为散射权重依赖速度。FT07 数值结果相对该截断积分的最大误差分别为：
+两种新策略均显式使用变化的 `x(l)` 和 `μ(l)`：
 
-| DOPRI tolerance | 相对截断区间真值的最大误差 |
-|---|---:|
-| 10⁻⁶ | {decomp_max[1e-6]:.6g} |
-| 10⁻⁸ | {decomp_max[1e-8]:.6g} |
-| 10⁻¹⁰ | {decomp_max[1e-10]:.6g} |
+- **共振变量变化限制器**：按 `|d ln x/dl|` 和 `|dμ/dl|` 限制步长，核心分辨尺度随 β₀² 缩小。远离分布核心时放宽，绝不以当前 opacity=0 为跳过整步的依据。
+- **步内共振边界定位**：几何 DOPRI5 可以取较大的步，但在连续轨道插值上求出共振面交点。先搜索内部极值，再括根，能发现起终点同号的窄区间；按交点分段积分。
 
-因此不能通过收紧 DOPRI 容差消除 FT07 在完整分布基准上的约 1.23% 误差。逐例分解见 [ft07_error_decomposition.csv](ft07_error_decomposition.csv)。
+二者共用 `l=l_a+(l_b−l_a)sin²(πz/2)` 的局部路径长度变换，处理两条速度根合并时的可积奇点。这里变换的是沿轨道的 l，而非半径 r。两个支撑内的速度根均被求和；轨道转向、重入共振区和撞击星表不会被当作径向逃逸处理。
 
-## 容差、步长和失败案例
+完整公式、控制器细节和调用例子见 [ALGORITHMS.md](ALGORITHMS.md)。
 
-| 方法 | tolerance | 耗时/ms | 成功例的最大相对误差 | 低估 >90% | 异常例数 |
-|---|---:|---:|---:|---:|---:|
-{chr(10).join(convergence)}
+## 非径向、转向和事件验证
 
-在 `tol=10⁻¹⁰`，原 DOPRI 和温度限制器均有 22 个赤道 E 模算例因 `stepsize underflow` 失败。这是空间 opacity 的可积奇点造成的另一种困难。失败例保留在 CSV 中，**不算入“成功例最大误差”**；不能据剩余算例的精度声称该配置整体成功。
+额外构造 **80 个初始几何/分布组合 × E/O 两种偏振 = 160 例**，其中 152 例为非径向初始方向。包含南北半球、两极、赤道、任意局域方位角、正负速度分布、初始向内、切向传播，以及从星表非径向发射。参数逐例写在 [angular_validation.csv](angular_validation.csv)。
 
-初始步长从 0.01 改为 0.001、0.1、1 km 后，原程序严重漏层例数分别为 28、26、21，说明结果依赖 stage 采样相位；温度限制器这三组均无严重漏层，最大相对误差不超过 7.59×10⁻⁴。FT07 分别测试了 0.005/0.01/0.02 的速度限制系数；温度限制器测试了 0.002/0.01/0.05/0.1。较细步长不保证表观误差严格单调，尤其在截断边界和可积奇点附近；全部配置见 [summary.csv](summary.csv)。
+非径向参考使用同一物理模型的**加密路径计算**：`Δl≤0.005 r`、16 个探测子区间、光深容差 10⁻⁸。它不是用户表之外另有解析真值，也不是已删除的径向速度积分。独立的窄层试验和原公式交叉检查另列在下方。
 
-## 推荐方法与精度边界
+| 方法 | 方向/偏振例数 | 最大归一化光深差异 | 单次全部额外算例耗时/ms | 失败数 |
+|---|---:|---:|---:|---:|
+{chr(10).join(angular_table)}
 
-首先定位共振支撑边缘 `x(r_end)=1`，用 `r=r_end(1−u²)` 消除赤道平方根奇点，并在分布核心对应的空间位置预先分段，再执行自适应 Gauss–Legendre 求积。这样同时解决“没有采到层”和“奇点迫使步长下溢”。完整速度分布保留，`integrate_to(r)` 可用于求累计光深与散射半径。
+这里差异定义为 `|Δτ|/max(|τ_ref|,10⁻¹²)`；验证阈值为 `|Δτ|≤10⁻⁷+10⁻⁴|τ_ref|`，还要求终止类型一致。耗时是单次观察值，不能与上面 5 次中位数混用。
 
-空间正则化和独立速度积分在 900 例上的最大相对差为 {float(v['max_spatial_velocity_relative']):.3g}；但它们相对用户参考表的最大误差仍为 **{float(worst['rel_error']):.8g}**。有 {len(discrepancies)} 例对表相对误差超过 10⁻⁸，主要集中在高能端。这些差异已全部计入指标，**没有改表、删除算例或用新积分结果替代参考值**。
+推荐方法的实际覆盖：{guard['escaped']} 例逃逸、{guard['surface']} 例撞击星表、{guard['turned']} 例发生径向转向、{guard['both_branches']} 例有两个速度分支同时贡献、{guard['caustics']} 例遇到分支合并边界，其中 {guard['multiple_crossings']} 个偏振算例有多次共振边界穿越。三个控制器的终止判定均与加密计算一致。
 
-最明显的一例：β₀=−0.9、μz=0.4、O 模、ω∞=100，表中 τ={float(worst['reference']):.17g}，空间积分 τ={float(worst['tau']):.17g}。收紧本次求积容差没有消除该差异；本报告将它视为对给定参考的残余偏差，不据交叉一致性断言参考表错误，也不声称对表达到 10⁻¹⁰ 精度。详见 [reference_discrepancies.csv](reference_discrepancies.csv) 和 [quadrature_convergence.csv](quadrature_convergence.csv)。
+FT07 在上表与**相同 99.8% 截断区间**的加密解比较，用于检查数值误差；不能把这一列误读为对完整粒子分布的误差。对于额外算例中完整 τ>10⁻⁶ 的情况，FT07 的截断偏差最大达到 {ft_angle_bias*100:.5f}%。
 
-## 验证与复现
+另外通过的检查：
 
-除完整表比较外，独立速度积分用于交叉检查：
+- 4 个已知精确支撑位置的人工窄共振区间。最窄宽度仅为一步的 10⁻⁶，常规探测点均在区间外，仍找到两侧边界；对独立变量变换积分的最大相对差 {validation['max_pocket_relative_error']:.3g}。
+- 3000 个任意角度点，将新稳定 opacity 表达式与原 `PhotonEvolution` 公式比较，最大归一化差 {validation['max_opacity_relative_difference']:.3g}。
+- {validation['event_tests']} 组固定 U∈{{0.1,0.5,0.9}} 的散射/逃逸检查，其中 {validation['escape_tests']} 组未达到散射光深；散射位置处，加密解的累计光深与 `−ln U` 最大绝对差 {validation['max_event_absolute_error']:.3g}。
+- Schwarzschild 冲量参数 `r sin(alpha)/L` 的最大相对漂移 {validation['max_impact_invariant_relative_error']:.3g}。
+- 2 个近擦边星表试验：理论近心点分别为 `R_star(1±10⁻⁶)`，成功区分撞击与逃逸；不会仅因一个步的两端在星表外就漏掉中间撞击。
 
-- 总光深：900 例全部通过。
-- 累计光深：{v['cumulative_cases']} 例，最大相对差 {float(v['max_cumulative_relative']):.3g}。
-- 固定 U∈{{0.01,0.1,0.5,0.9}} 的散射/逃逸：{v['event_cases']} 例，其中 {v['escapes']} 例逃逸，判断全部一致；发生散射时最大半径相对差 {float(v['max_event_radius_relative']):.3g}。
-- 额外冷/高温参数 β₀∈{{−0.03,−0.05,−0.99}}：{v['stress_cases']} 例，最大相对差 {float(v['max_stress_relative']):.3g}。
-- 新增 `do_step(max_step)`：零 RHS、控制器自动放大后、正反向积分和非法上限检查通过。
-- `src/main.cpp` 编译运行完成，900 行参数顺序与参考一致；输出保存在 [main_results.txt](main_results.txt)。编译启用 `-Wall -Wextra -pedantic`，最终无编译警告。
+这些验证证明实现确实执行了通用轨道和两分支算法，不是把径向结果套给非径向光线。有限测试不是对所有连续参数、退化高阶切触或任意未解析磁场结构的数学保证。
 
-这些累计量/散射半径验证使用独立公式的 C++ 速度积分，原表本身只有总光深，因此不能说它们直接由原表验证。
+## FT07 对照的含义
 
-完整重跑：
+FT07 控制器现在包含完整的方向导数：
+
+\[
+\frac{{d\beta}}{{dl}}=\frac{{1-\beta^2}}{{\beta-\mu}}
+\left[(1-\beta\mu)\frac{{d\ln x}}{{dl}}+\beta\frac{{d\mu}}{{dl}}\right].
+\]
+
+实现论文的层外 r/10、边缘分辨率、动量相对步长式 (39) 和根合并限制式 (38)。为比较完整未散射轨道的光深，三种修复方法共用同一套边界/奇点处理；FT07 的极近合并邻域由它接管，避免无限缩步。**这里测得的是 FT07 控制器在共同数值基础上的成本，不是论文原始 FORTRAN Monte Carlo 程序的成本。**
+
+将 FT07 与通用边界定位算法在相同截断区间上的结果比较，900 例最大数值相对差仅为 {max_ft_num:.3g}；但是粒子尾部截断本身最多丢掉 {max_cut*100:.7f}% 光深。因此对原表的约 1.23% 偏差主要不是步长不够小。分解数据见 [ft07_decomposition.csv](ft07_decomposition.csv)。
+
+## 原表残余差异
+
+推荐方法对原表的最大相对误差为 **{float(worst['rel_error']):.9g}**，出现在 β₀={float(worst['b0']):g}、μz={float(worst['muz']):g}、{'E' if worst['pol']=='1' else 'O'} 模、ω∞={float(worst['omega_inf']):g}。
+
+- 原表 τ={float(worst['reference']):.17g}
+- 本次通用边界定位 τ={float(worst['tau']):.17g}
+
+降低容差或改变初始步长后，该量级差异仍存在。所有误差指标继续把用户表作为参考；没有更改参考值、排除这些算例或宣称达到 10⁻¹⁰ 的对表精度。超过 10⁻⁷ 的差异列在 [reference_discrepancies.csv](reference_discrepancies.csv)。
+
+## 完整参数扫描
+
+| 方法 | 容差 | 控制参数 | 初始步长/km | 耗时/ms | 最大相对误差 | 严重漏层数 | 异常数 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+{chr(10).join(scan)}
+
+限制器系数越小通常越耗时，但对给定参考表的误差不保证单调。原程序收紧容差到 10⁻⁸ 后仍有 7 例严重漏层；改变初始步长也不能稳定解决问题。两种新方法在这些配置中均未严重漏层。边界定位默认系数附近的计时小幅差别主要属于运行波动，不能据单个最小时间声称相应系数更优。
+
+## 文件与复现
+
+每个方法都有独立入口：`benchmark/baseline.cpp`、`benchmark/ft07.cpp`、`benchmark/phase_cap.cpp`、`benchmark/event_guard.cpp`。共同物理与算法在 `src/resonance.hpp`、`src/resonance_panels.hpp`、`src/transport.hpp`，原一般轨道/opacity 实现仍在 `src/photon_evolution.hpp`。
+
+所有输出、辅助驱动和说明均保存在 output/。本次删除了旧径向算法、其测试和过时的 benchmark/ 下报告；不要再使用旧径向方法的构建命令。
 
 ```sh
-python3 output/run_benchmarks.py --repeats 7
+python3 output/run_benchmarks.py --repeats 5
 python3 output/write_report.py
 ```
 
-单独运行某个方法（从仓库根目录）：
+也可以单独运行：
 
 ```sh
-g++-16 -O3 -std=c++23 benchmark/spatial_regularized.cpp -o output/spatial_regularized
-output/spatial_regularized output/my_result.csv 1e-8 .01 7 .01
+g++-16 -O3 -std=c++23 benchmark/event_guard.cpp -o output/event_guard
+output/event_guard output/my_result.csv 1e-6 .1 5 .01
 ```
 
-参数顺序为：输出 CSV、容差、限制器系数、重复次数、初始步长。后两类径向求积算法忽略限制器系数和初始步长；统一命令行只是方便比较。`Makefile` 原有路径指向不存在的 `ode/main.cpp`，本次没有改动根目录文件；请使用上述已验证命令或 output/ 中的脚本。
+参数依次为输出 CSV、光深容差、控制器系数、计时重复次数和初始步长。共同辅助头文件按要求放在 output/，构建 benchmark 时需要保留。
 
-所有新增方法分别在 `benchmark/*.cpp`，生产算法在 `src/`，结果、辅助测试文件、二进制和说明均在 `output/`。完整算法推导、FT07 的实现细节及计时范围见 [ALGORITHMS.md](ALGORITHMS.md)。
+每次计时包含分布对象、轨道初始化、共振边界定位和积分；不包含参考数据与磁场文件读取、编译或输出 I/O。九个温度的分位数共用准备耗时另记 `setup_ms`。原程序的 `evaluations` 为四维 RHS 调用次数，修复方法则为磁场/共振状态查询次数；后者不含纯几何 RHS，不能把两者当成等价工作单位。逐例 CSV 包含函数查询数、接受步数及光深求积调用数，实际时间才是主要效率指标。
+
+完整逐例结果和所有配置汇总见 [summary.csv](summary.csv)、[summary.json](summary.json)；主程序的 900 行结果见 [main_results.txt](main_results.txt)。
 '''
 (OUT/'REPORT.md').write_text(report)
-print('Wrote output/REPORT.md and diagnostic CSV files.')
+print('Wrote output/REPORT.md, angular_summary.csv and diagnostics.')

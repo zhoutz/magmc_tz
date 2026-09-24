@@ -1,7 +1,5 @@
 #pragma once
-#include "../src/dopr5.hpp"
-#include "../src/radial_resonance.hpp"
-#include "../src/quadrature.hpp"
+#include "../src/transport.hpp"
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -10,64 +8,26 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
-struct Case { double b0, muz; int pol; double energy, reference; };
-struct Result { double tau=0; long evaluations=0, steps=0, rejected=0; std::string status="ok"; };
-struct Config { double tol=1e-6, parameter=.01; int repeats=5; double initial_step=.01; };
-struct Edges { double low, median, high; };
-
-inline Edges distribution_edges(Boltzmann const &fb) {
-  auto quantile=[&](double probability) {
-    auto cdf=[&](double b) { long n=0; return quadrature::adaptive([&](double z){return fb.f(z);},-1.,b,1e-13,1e-12,n); };
-    return zriddr([&](double b){return cdf(b)-probability;},-1.,-1e-16,1e-14);
-  };
-  return {quantile(.001),quantile(.5),quantile(.999)};
+struct Case { double b0,muz; int pol; double energy,reference; };
+struct Result { double tau=0; long evaluations=0,steps=0,rejected=0; std::string status="ok"; };
+struct Config { double tol=1e-6,parameter=.1; int repeats=5; double initial_step=.01; };
+using Edges=std::array<double,3>;
+inline Edges distribution_edges(Boltzmann const &fb){return transport::distribution_edges(fb);}
+inline Result general_solve(BField const &field,Case const &c,Config const &cfg,Edges const &edges,transport::Method method) {
+ Boltzmann fb(c.b0);
+ auto photon=transport::make_photon(R_star,c.muz,0,0,c.energy,c.pol ? Polarization::E : Polarization::O);
+ transport::Options options;options.method=method;options.tolerance=cfg.tol;options.resolution=cfg.parameter;options.initial_step=cfg.initial_step;
+ auto r=transport::integrate(field,fb,photon,options,&edges);
+ return {r.tau,r.evaluations,r.steps,r.quadrature_evaluations,"ok"};
 }
-
-struct CountedEvolution {
-  PhotonEvolution photon;
-  RadialResonance const &ray;
-  Edges edges;
-  bool truncate=false;
-  mutable long evaluations=0;
-  void operator()(double l, YVector const &y, YVector &dy) const {
-    ++evaluations;
-    photon(l,y,dy);
-    if (truncate) {
-      double b=ray.beta(y[0]);
-      if (b<edges.low || b>edges.high) dy[3]=0;
-    }
-  }
-};
-
-inline Result spatial_ode(BField const &field, Case const &c, Config const &cfg,
-                          Edges edges, int method) {
-  Boltzmann fb(c.b0);
-  RadialResonance ray(field,fb,c.muz,c.energy,c.pol ? Polarization::E : Polarization::O);
-  double3 rhat{std::sqrt(1-c.muz*c.muz),0,c.muz}, n{0,1,0};
-  CountedEvolution evolution{{field,fb,n,rhat,cross(n,rhat),{R_star,0,0,0},c.energy,ray.pol},ray,edges,method==1};
-  StepperDopr5<4,CountedEvolution> stepper(evolution,cfg.tol,cfg.tol);
-  stepper.add_event([](double, YVector const &y){return y[0]-10000;});
-  stepper.init(0,cfg.initial_step,{R_star,0,0,0});
-  FT07StepControl ft{ray,edges.low,edges.median,edges.high,cfg.parameter};
-  ThermalStepControl thermal{ray,edges.low,cfg.parameter};
-  Result result;
-  while (true) {
-    if (++result.steps>2000000) throw std::runtime_error("Step budget exceeded");
-    double cap=std::numeric_limits<double>::infinity();
-    if (method==1) cap=ft(stepper.y_old[0]);
-    if (method==2) cap=thermal(stepper.y_old[0]);
-    long before=evolution.evaluations;
-    stepper.do_step(cap);
-    result.rejected+=(evolution.evaluations-before)/6-1;
-    int event=stepper.detect_event();
-    if (event==0) { result.tau=stepper.y_new[3]; break; }
-    stepper.update_old();
-  }
-  result.evaluations=evolution.evaluations;
-  return result;
+inline Result baseline(BField const &field,Case const &c,Config const &cfg) {
+ Boltzmann fb(c.b0);auto p=transport::make_photon(R_star,c.muz,0,0,c.energy,c.pol ? Polarization::E : Polarization::O);
+ PhotonEvolution ev{field,fb,p.n,p.e1,p.e2,{R_star,0,0,0},c.energy,p.pol};
+ long calls=0;auto rhs=[&](double l,YVector const &y,YVector &dy){++calls;ev(l,y,dy);};
+ StepperDopr5<4,decltype(rhs)> s(rhs,cfg.tol,cfg.tol);s.add_event([](double,YVector const &y){return y[0]-10000;});s.init(0,cfg.initial_step,{R_star,0,0,0});
+ long steps=0;while(true){if(++steps>2000000)throw std::runtime_error("Step budget exceeded");s.do_step();if(s.detect_event()==0)break;s.update_old();}
+ return {s.y_new[3],calls,steps,0,"ok"};
 }
-
 template<class Solver> int benchmark_main(int argc,char **argv,std::string name,Solver solve) {
  try {
   if (argc<2) throw std::runtime_error("Usage: executable output.csv [tolerance] [parameter] [repeats] [initial_step]");
@@ -110,7 +70,7 @@ template<class Solver> int benchmark_main(int argc,char **argv,std::string name,
   std::ofstream out(argv[1]); if(!out)throw std::runtime_error("Cannot open output");
   out<<std::setprecision(17);
   out<<"# method="<<name<<" tolerance="<<cfg.tol<<" parameter="<<cfg.parameter<<" initial_step="<<cfg.initial_step<<" repeats="<<cfg.repeats<<" setup_ms="<<setup_ms<<" batch_median_ms="<<batches[batches.size()/2]<<" batch_min_ms="<<batches.front()<<" batch_max_ms="<<batches.back()<<'\n';
-  out<<"b0,muz,pol,omega_inf,tau,reference,abs_error,rel_error,microseconds,evaluations,steps,rejected,status\n";
+  out<<"b0,muz,pol,omega_inf,tau,reference,abs_error,rel_error,microseconds,evaluations,steps,quadrature_evaluations,status\n";
   double maxrel=0; int failed=0, exceptions=0;
   for(size_t i=0;i<cases.size();++i) {
     auto c=cases[i]; auto r=results[i]; auto &times=elapsed[i]; std::sort(times.begin(),times.end());

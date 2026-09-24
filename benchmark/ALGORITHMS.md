@@ -1,94 +1,116 @@
-# 共振光深积分：算法与实现说明
+# 任意方向光线的共振积分
 
-所有误差比较均以用户提供的 `table/bench_od.txt` 为准，未修改或重新生成该表。参数、磁场、Schwarzschild 红移、proper length、速度分布以及平均速度归一化均沿用两份 note。FT07 仅作为步长算法的来源，不把它的平直时空模型或单粒子速度归一化替换进本项目。
+本次移除了原先依赖向外径向单调性的 `RadialResonance`、`RadialOpticalDepth`、径向速度积分和径向温度限制器，包括对应 benchmark、二进制及过时结果。`py/bench_od.py` 和 `table/bench_od.txt` 是用户指定的参考，保留不动。新的输运算法不反解共振半径，不固定光子–磁场夹角，也不要求半径单调。
 
-## 漏层原因
+## 通用状态和物理量
 
-`StepperDopr5::try_step()` 仅在有限个 stage 计算 RHS。共振层外的速度分布权重可能为零或极小；若所有 stage 都未落入层内，积分增量与嵌入误差同时接近零。控制器于是允许把步长放大到原来的 10 倍。仅收紧 `atol/rtol` 不能保证发现一个未被采样的共振层。事后的 escape event/dense output 同样不能恢复未采到的光深。
-
-基准算例中，光线向外径向传播，磁共纬度及光子–磁场夹角余弦 μ 不变。定义
+`transport::integrate(field, distribution, photon, options)` 接受 `Photon` 中的轨道基矢 `n,e1,e2`、初始 `r,psi,alpha`、能量和偏振。它沿局域静止观测者测量的路径长度 l 演化
 
 \[
-x(r)=\frac{\omega_c(R_*)}{\omega_\infty}(R_*/r)^q L(r),\quad
-L=\sqrt{1-r_s/r},\quad Q=q-\frac{r_s}{2(r-r_s)}.
+dr/dl=L\cos\alpha,\quad d\psi/dl=\sin\alpha/r,\quad
+d\alpha/dl=-\frac{\sin\alpha}{rL}\left(1-\frac{3r_s}{2r}\right).
 \]
 
-因此 `d ln x/dl = -Q L/r`。对 β<0、μ≥0，只有负速度根贡献，且在 `x=1` 处到达 β=0，随后光深密度为零。β 接近零时用有理化根
+每个采样点重新构造磁场方向和光子方向，求 `x=ωc/ω`、`μ=k̂·B̂`。红移、角度变化、磁场角结构均包含在内。南北半球、正负速度分布和两条可贡献的速度根使用同一条计算路径。
+
+`make_photon(r, muz, alpha, azimuth, energy, pol)` 只是初始化工具；azimuth 是局域切平面内相对 θ̂ 的方位角。散射后已有轨道基矢时，可以直接构造 `Photon`，不必使用此工具。
+
+对于 `D=x²+μ²−1>0`，保留速度分布支撑内的所有根。用 Vieta 关系稳定求根，并将 note 中的因子改写为
 
 \[
-\beta=-\frac{x^2-1}{\mu+x\sqrt{x^2+\mu^2-1}}
+|\mu-\beta|=\frac{\sqrt D(1-\beta\mu)}x,\qquad
+P_E=1/2,\quad P_O=D/(2x^2).
 \]
 
-避免消减误差。μ=0 的 E 模在这个末端具有可积平方根奇点。
+这是数值等价变形，不改变速度分布的平均速度归一化。`expm1(2 logx)` 用于稳定计算 `x²−1`。3000 个任意角度点将新公式与原 `PhotonEvolution::calc_dtaudl` 交叉比较。
 
-## 1. 原程序对照：`benchmark/baseline.cpp`
+## 共同的边界和奇点处理
 
-保留原始四维 `(r,psi,alpha,tau)` 方程、初始 proper-path 步长 0.01 km、DOPRI5 的 FSAL/误差控制以及 `r=10000 km` 的 escape event。原 `PhotonEvolution` 原样移至 `src/photon_evolution.hpp`，只删除未使用的参数名。无共振限制器。
+三种修复方案共用一个通用的轨道步内积分器，比较的是步长控制策略：
 
-## 2. FT07 步长控制：`benchmark/ft07.cpp`
+1. DOPRI5 只演化三维几何状态，并提供连续插值。几何容差取 `min(1e-10, 0.01*tau_tolerance)`。
+2. 在每个已接受的轨道步内定位 `D=0`、β=0，以及多个预设速度对应的共振面
+   `Hβ(l)=log x(l)−log(1−βμ(l))+½ log(1−β²)=0`。
+3. 速度标记取 β₀ 的若干倍和 relativistic tail 的若干值；它们仅用于分段，完整分布的尾部不丢弃。FT07 对照另有明确的 99.8% 截断。
+4. 不只检查步的两个端点。默认使用 8 个子区间探测表面变化；检测到趋势反转时，用黄金分割搜索内部极值，再将极值加入括根节点。因此，即使起点、终点以及普通采样点都在层外，也能发现内部的窄共振区间。局部根求解容差为步内参数的 `3e-15`。
+5. 分段后，在每一段 `[l_a,l_b]` 内作通用的路径长度变换
+   `l=l_a+(l_b−l_a)sin²(πz/2)`，再使用开节点 8/16 点 Gauss–Legendre 自适应积分。这同时处理两端可能出现的 E 模平方根奇点。变换的是 **l，不是 r**，所以转向、非径向传播和分支合并不破坏它。
+6. 距离已定位的 D=0 边界极近时，用单侧 Taylor 系数锚定 D=0，避免浮点消减放大为虚假的奇点误差。该局部处理仍使用真实轨道上的 x、μ 及其变化。
 
-依据 `article/FT07.pdf` §3.3–3.4，印刷页 622–623，及式 (31)、(38)、(39)：
+在轨道步内定位 stellar surface 和 escape surface；另外检查径向转向处的最小半径，避免一步的两端都在星表外，却在中间穿入星体。返回结果区分逃逸、撞击星表、达到指定累计光深和达到路径长度上限。
 
-1. 用分布 CDF 的 0.001、0.5、0.999 分位数定义低边界、中心和高边界。这样保留论文的中央 99.8% 粒子区间；使用中位数是论文为宽分布允许的选择。低/高半宽分别为中心到边界的距离。
-2. 层外取 `Δl≤r/10`。对向外径向、单调 x，用 `r+Δl` 作保守 look-ahead；即使一步的起终点都在分布外，也检查是否跨越入口。接近入口时把速度步长限制到距边界的距离加低半宽的 1/100。
-3. 层内使用式 (39)：`|Δβ|≤0.01 (1−β²)|β|`，等价于 `|Δ(βγ)|≤0.01|βγ|`。
-4. μ 不变时，式 (38) 是 `|Δβ|≤0.01|μ−β|`。
-5. 由式 (31) 换算 proper length：
-   `|dβ/dl| = (QL/r) (1−βμ)(1−β²)/|β−μ|`。
-   这里用 `d ln(ωc/ω)/dl` 包含 GR 红移，是相对于论文平直时空公式的必要适配。
-6. 以上限制与 DOPRI5 自身的建议步长取最小值；积分仅保留截断区间内的 opacity。
+这种发现边界的方法是数值策略，不是对任意未解析高频磁场的数学证明。当前自相似场上的系统角度测试、加密检查及独立窄区间测试见报告。精确退化的高阶切触不应当由普通简单根误差估计来认证；本次不声称有限测试穷尽连续参数空间。
 
-这是 **FT07 步长控制 + 现有 DOPRI5 光深积分**，不是对论文整个 FORTRAN Monte Carlo 程序或式 (33) 一阶累加的逐行复刻。论文未完全指定的经验分布边界细化采用上述确定规则。`parameter=.01` 为论文数值；扫描 `.005/.02` 同比例改变速度与边界限制，`r/10` 不变。β=0 的小常量分支已实现，但中央 99.8% 截断使该特殊点不进入层内积分。
+## FT07 控制器
 
-FT07 粒子截断并非光深误差控制。`output/ft07_truncation.csv` 在完全相同的 β 区间上独立积分，以区分截断偏差和空间积分误差。
+代码：`benchmark/ft07.cpp`，控制器在 `src/transport.hpp`。
 
-## 3. 温度相关的 log(x) 限制器：`benchmark/thermal_cap.cpp`
-
-冷分布且 μ=0 时，`ln g(β)≈β²/2`，共振层在 ln(x) 中的宽度为 O(β₀²)。取
+实现论文 §3.3–3.4 的步骤，分布边界取 CDF 的 0.001、0.999 分位数，中心取中位数。层外上限 r/10；接近边缘时将其解析到相应半宽的 1/100；层内限制
 
 \[
-\Delta l\le\min\left\{r/10,
-\frac{\eta\beta_0^2+\max[0,\ln x-\ln g(\beta_{.001})]}{QL/r}\right\},\quad x>1.
+|\Delta\beta|\le0.01(1-\beta^2)|\beta|.
 \]
 
-层附近有 `Δln x≲ηβ₀²` 的限制，远处逐渐放宽。x≤1 后使用 r/10。默认 η=0.01。0.001 分位数仅决定何处开始加强限制，**不截断任何速度尾部**。
-
-它不依赖当前 opacity 是否为零，因而能防止本基准中的跨层。不过它仍在原始 l 变量上积分，未移除赤道端点奇点；严格容差下的下溢记录为失败，不掩盖为成功。该径向表达式不能直接充当非径向、可多次进出共振区的保证。
-
-`StepperDopr5::do_step(max_step)` 新增可选正数幅度上限，在采样前应用，支持正反向积分。无参数调用保持旧行为，拒步只进一步缩小步长。
-
-## 4. 空间正则化 + 预置区间：`benchmark/spatial_regularized.cpp`
-
-这是当前 `src/main.cpp` 使用的方法，实现在 `src/radial_optical_depth.hpp`：
-
-1. 括根求出 `x(r_end)=1`，明确整个共振支撑区间。
-2. 在空间积分中换元 `r=r_end(1−u²)`。在赤道，`dτ/dr∝(r_end−r)^−1/2`，Jacobian `|dr/du|=2r_end u` 消去奇点。
-3. 在 β₀ 的若干倍以及 relativistic tail 的若干 β 值对应的**空间位置**预先分段。端点始终包括 R* 和 r_end，未舍弃尾部。这样自适应求积在开始前已经看见冷共振层。
-4. 每个空间区间用开节点 8/16 点 Gauss–Legendre 差值估计误差，不采端点；未收敛时二分。`atol` 按初始区间数分配。这个误差估计是经验估计，不是严格全局误差上界。
-5. 每个节点仍计算 note 中的**空间 opacity 乘空间 Jacobian**，不使用速度参考积分公式。角向磁场因子预先计算，因为径向轨道上它们不变。
-
-令 `k=r_s/r_end`，在端点附近使用
+与上次实现不同，现在使用完整方向导数。由共振条件得
 
 \[
-\ln x=-(q+\tfrac12)\operatorname{log1p}(-u^2)
- +\tfrac12\operatorname{log1p}[-u^2/(1-k)],\quad
-x^2-1=\operatorname{expm1}(2\ln x)
+\frac{d\beta}{dl}=\frac{1-\beta^2}{\beta-\mu}
+\left[(1-\beta\mu)\frac{d\ln x}{dl}+\beta\frac{d\mu}{dl}\right].
 \]
 
-保持小量精度；直接计算 `x(r)−1` 会在端点附近损失有效位数。
+式 (38) 的限制也保留 `dμ/dl`，即 `Δl≤0.01|μ−β|/|dμ/dl−dβ/dl|`。方向导数由沿完整 geodesic 的对称差分计算，差分长度为 `1e-5 r`。
 
-`integrate_to(r)` 返回从表面到 r 的累计光深；散射位置由累计光深减 `−ln U` 的括根求解得到。该 API 明确限制 β₀<0、μ≥0 的向外径向光线；不满足时拒绝。它不是完整非径向 Monte Carlo 传播器。
+该对照保留论文中央 99.8% 粒子截断，并非完整分布的高精度算法。`D≤1e-6` 的根合并邻域交给共同的边界/奇点积分器，否则式 (38) 会使总光深积分无限逼近边界而不穿过。论文原本在 Monte Carlo 散射后改变光子方向，本任务需要未散射轨道的整个光深，因此明确采用这个数值补充。
 
-## 5. 显式支撑区间的速度积分：`benchmark/velocity.cpp`
+因此本次名称的准确含义是 **FT07 控制器 + 通用边界/奇点处理 + GR 几何**，不是原论文完整程序的逐行复刻，也不能将其时间解释为 FT07 原始代码耗时。
 
-使用 note 推导的速度参考公式；区别于原 Python benchmark 的实现细节：显式求出 β 支撑区间、预置速度区间，再用 8/16 点 Gauss–Legendre 自适应积分。每次采样都括根求出共振半径。它既是可用的径向算法，也是空间正则化方法的交叉检查；最终准确度指标仍以用户表为准，不能用两者互相一致替换对原表的比较。
+## 新策略一：共振变量变化限制器
 
-## 计时与文件
+代码：`benchmark/phase_cap.cpp`。
 
-从仓库根目录执行 `python3 output/run_benchmarks.py --repeats 7`。脚本只有 Python 标准库依赖，默认使用 g++-16，`-O3 -std=c++23`，不使用 fast-math。可用 `--compiler` 指定编译器。
+冷共振层在最不利的角度处，log(x) 尺度可小到 O(β₀²)。同时限制 x 和 μ 的变化：
 
-每个配置先预热全部 900 例，再计时 7 批完整的 900 例，汇报批耗时中位数及最小/最大值。计时包含每次构造分布、径向几何、定位共振层及预置区间，但不包含编译、文件 I/O、参考表读取和共用磁场表读取。九个温度的分位数一次性准备耗时单列 `setup_ms`；为便于统一驱动，所有方法均执行这个共用准备，即使方法未使用分位数。
+\[
+v=|d\ln x/dl|+\frac{|d\mu/dl|}{\max(0.01,|\beta_0|)},\qquad
+\Delta l\le\min\left[r/10,\frac{\eta\beta_0^2+d/2}{v}\right].
+\]
 
-`evaluations`：DOPRI 方法为完整四维 RHS 调用次数；求积方法为 integrand 调用次数，不包含共振半径括根函数求值。`steps`：DOPRI 接受步数，求积方法初始区间数。它们不是等价工作单位，应优先比较实际时间。失败行保留状态和耗时，工作计数置零；汇总的平均工作量只取成功行。
+其中 d 是当前位置到热分布核心对应共振面范围的相位距离；处在范围内部时 d=0，远离核心时逐渐放宽限制。核心以 `|β|≤min(0.999,4|β₀|)` 内的速度标记估计；这只影响步长，**不截掉区间外粒子的贡献**。零导数附近仍受几何上限约束；共同的步内边界定位负责检查整个被接受步，而不把局部导数近似当作不会漏层的充分证明。
 
-`summary.csv/json` 是所有配置的汇总；每个配置 CSV 含 900 行参数、数值光深、原表值、绝对/相对误差、耗时、工作量与失败信息。`cumulative.csv`、`events.csv`、`stress.csv` 为补充验证，`run.log` 和 `environment.json` 保留运行命令与环境。构建产物、说明和测试辅助文件均按要求放在 output/，不要只为清理结果而删除整个 output/。
+默认 η=0.1，另外测量 0.03 和 0.3。它不需要知道未来共振半径，并且 `dμ/dl` 对任意方位角均有效。
+
+## 新策略二：轨道步内边界定位
+
+代码：`benchmark/event_guard.cpp`。当前 main 使用此方法。
+
+不按热宽度限制每一段空间步长；让几何 DOPRI5 选择步长，并设置 `Δl≤min(0.4,4η)r`，默认 η=0.1。由上述共同积分器定位该步内所有发现的共振面，分段后累计光深。这避免为了穿过一个窄层而在整段轨道上持续取热宽度级别的小步。
+
+这个方法的效率优势来自把几何误差控制与共振积分分开。它没有径向快路径；基准输入虽为径向，执行的仍是同一套任意方向轨道代码。
+
+## 累计光深与散射位置
+
+`options.path_limit` 可指定 proper path length 截止位置；`options.tau_target=-log(U)` 可定位第一次达到抽样光深的位置。发生散射时，只在包含目标的面板内部对累计光深括根，并返回 l 和 `(r,psi,alpha)`。这是自由传播段的定位器；它不代替散射后方向、能量和偏振的采样。
+
+```cpp
+Boltzmann charges(-0.3);
+auto photon = transport::make_photon(30, -0.4, 2.1, 0.7, 1.0, Polarization::E);
+transport::Options options;
+options.method = transport::Method::event_guard;
+options.tau_target = -std::log(0.5);
+auto result = transport::integrate(field, charges, photon, options);
+```
+
+这个例子是南半球、非径向且初始向内的光子，使用与 main 和径向 benchmark 相同的求解器。
+
+## 文件与复现
+
+- `src/resonance.hpp`：完整几何下的共振参数、两条速度根与稳定 opacity。
+- `src/resonance_panels.hpp`：步内共振面定位、极值探测与奇点积分。
+- `src/transport.hpp`：控制器、几何演化、累计光深与事件。
+- `benchmark/baseline.cpp`：原四维 DOPRI5 对照。
+- `benchmark/{ft07,phase_cap,event_guard}.cpp`：三种通用修复方案。
+- `benchmark/angular_validation.cpp`：非径向和正负速度分布验证。
+- `benchmark/transport_validation.cpp`：独立窄层测试、opacity 公式、散射事件、轨道守恒量及 FT07 截断分解。
+- `output/run_benchmarks.py`：完整构建、计时和验证脚本；其他辅助文件、结果和说明也都位于 output/。
+
+从仓库根目录运行：`python3 output/run_benchmarks.py --repeats 5`。
