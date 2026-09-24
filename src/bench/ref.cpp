@@ -120,12 +120,22 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
 
     return std::fma(x, x, (mu_in - 1) * (mu_in + 1));
   });
+  // beta = 0 is also a boundary of the one-sided velocity distribution.
+  // Split there even when the quadratic discriminant is still positive.
+  stepper.add_event([&](double, YVector const &y) {
+    double r = y[0];
+    return B_to_omega * bfield.calc_B(r, muz).length() * std::sqrt(1 - rs / r) / oi - 1;
+  });
+  // These rays start with alpha = 0 and stay radial: mu_in is constant and
+  // omega_c / omega decreases outward. For counter-streaming particles the
+  // last supported root ends at beta = 0; otherwise it ends at discriminant = 0.
+  const bool stop_at_beta_zero = b0 * bfield.calc_B(R_star, muz).x <= 0;
   stepper.init(0.0, 1e-3 * R_star, {R_star, 0.0, 0.0});
   double tau = 0;
 
   while (true) {
-    stepper.do_step(1e-4 * stepper.y_old[0]);
-    // dense_out needs coefficients for every accepted step, even without an event.
+    // QAGS resolves the optical-depth integrand within each smooth orbit step.
+    stepper.do_step(1e-2 * stepper.y_old[0]);
     stepper.prepare_dense();
     int event_id = stepper.detect_event();
 
@@ -141,7 +151,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
 
     tau += dtau;
 
-    if (event_id == 0) break;
+    if (event_id == 0 || event_id == 1 || (event_id == 2 && stop_at_beta_zero)) break;
     stepper.update_old();
   }
   return tau;
