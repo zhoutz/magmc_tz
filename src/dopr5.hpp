@@ -54,6 +54,9 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   }
 
   void init(double x_init, double h_init, YVector const &y_init) {
+    if (!(std::isfinite(h_init) && h_init > 0)) {
+      throw std::invalid_argument("h_init must be positive and finite");
+    }
     x_old = x_init;
     h_old = h_init;
     y_old = y_init;
@@ -103,7 +106,9 @@ template <int N, class DerivFunc> struct StepperDopr5 {
     }
   }
 
-  void do_step() {
+  void do_step(double max_step = std::numeric_limits<double>::infinity()) {
+    if (!(max_step > 0)) throw std::invalid_argument("max_step must be positive");
+    h_old = std::min(h_old, max_step);
     while (true) {
       if (std::abs(h_old) <= std::abs(x_old) * EPS) {
         throw std::runtime_error("stepsize underflow in StepperDopr5");

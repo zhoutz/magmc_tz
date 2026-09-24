@@ -79,40 +79,46 @@ double event_escape(double x, YVector const &y) {
 
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
+double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
+  Boltzmann fb(b0);
+  double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
+  double3 n{0, 1, 0};
+
+  PhotonEvolution photon_evolution{
+      .bfield = bfield,
+      .fb = fb,
+      .n = n,
+      .e1 = r_hat,
+      .e2 = cross(n, r_hat),
+      .r_psi_alpha_tau = {R_star, 0.0, 0.0, 0.0},
+      .omega_inf = oi,
+      .pol = pol,
+  };
+
+  StepperDopr5<4, PhotonEvolution> stepper(photon_evolution, 1e-6, 1e-6);
+  stepper.add_event(&event_escape);
+  photon_evolution.r_psi_alpha_tau[3] = 0;
+  stepper.init(0.0, 1e-3 * R_star, photon_evolution.r_psi_alpha_tau);
+
+  while (true) {
+    stepper.do_step();
+    int event_id = stepper.detect_event();
+    if (event_id == 0) break;
+    stepper.update_old();
+  }
+  double tau = stepper.y_new[3];
+  return tau;
+};
+
 int main() {
+  std::of
   for (double b0 : {-0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9}) {
-    Boltzmann fb(b0);
     for (double muz : {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}) {
-      double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
-      double3 n{0, 1, 0};
       for (double oi : {0.01, 0.1, 1., 10., 100.}) {
         for (Polarization pol : {Polarization::E, Polarization::O}) {
-          PhotonEvolution photon_evolution{
-              .bfield = bfield,
-              .fb = fb,
-              .n = n,
-              .e1 = r_hat,
-              .e2 = cross(n, r_hat),
-              .r_psi_alpha_tau = {R_star, 0.0, 0.0, 0.0},
-              .omega_inf = oi,
-              .pol = pol,
-          };
-
-          StepperDopr5<4, PhotonEvolution> stepper(photon_evolution, 1e-6, 1e-6);
-          stepper.add_event(&event_escape);
-          photon_evolution.r_psi_alpha_tau[3] = 0;
-          stepper.init(0.0, 1e-3 * R_star, photon_evolution.r_psi_alpha_tau);
-
-          while (true) {
-            stepper.do_step();
-            int event_id = stepper.detect_event();
-            if (event_id == 0) break;
-            stepper.update_old();
-          }
-          double tau = stepper.y_new[3];
-
-          std::println("b0={}, muz={}, pol={}, omega_inf={}, tau={}", b0, muz,
-                       (pol == Polarization::E ? "E" : "O"), oi, tau);
+          double tau = total_optical_depth(b0, muz, oi, pol);
+          // std::println("b0={}, muz={}, pol={}, omega_inf={}, tau={}", b0, muz,
+          //              (pol == Polarization::E ? "E" : "O"), oi, tau);
         }
       }
     }
