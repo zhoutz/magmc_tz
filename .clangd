@@ -2,3 +2,4 @@ CompileFlags:
   Compiler: g++-16
   Add:
     - -std=c++23
+    - -I/opt/homebrew/include
