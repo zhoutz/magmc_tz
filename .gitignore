@@ -3,6 +3,7 @@ build/
 article/
 .vscode/
 __pycache__/
+output/
 
 *.out
 *.txt

@@ -140,7 +140,9 @@ def calc_optical_depth(b0, muz, omega_inf, pol):
 
         return prefactor * body
 
-    return quad(integral, boltzmann.b_min, boltzmann.b_max, epsabs=0, epsrel=1e-11)[0]
+    G = omega_c * np.sqrt(1 - rs / R_star) / omega_inf
+    lower = -(G * G - 1) / (mu + G * np.sqrt(G * G + mu * mu - 1))
+    return quad(integral, lower, boltzmann.b_max, epsabs=0, epsrel=1e-11)[0]
 
 
 output_path = "table/bench_od.txt"
