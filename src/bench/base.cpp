@@ -1,9 +1,9 @@
-#include "bfield.hpp"
-#include "constants.hpp"
-#include "distribution.hpp"
-#include "dopr5.hpp"
-#include "photon.hpp"
-#include "solve_quadratic.hpp"
+#include "../bfield.hpp"
+#include "../constants.hpp"
+#include "../distribution.hpp"
+#include "../dopr5.hpp"
+#include "../photon.hpp"
+#include "../solve_quadratic.hpp"
 
 #include <array>
 #include <cmath>
