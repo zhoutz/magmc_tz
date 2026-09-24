@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <print>
 
@@ -111,16 +112,17 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
 };
 
 int main() {
-  std::of
+  std::FILE *fp = std::fopen("output/base.txt", "w");
   for (double b0 : {-0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9}) {
     for (double muz : {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}) {
       for (double oi : {0.01, 0.1, 1., 10., 100.}) {
         for (Polarization pol : {Polarization::E, Polarization::O}) {
           double tau = total_optical_depth(b0, muz, oi, pol);
-          // std::println("b0={}, muz={}, pol={}, omega_inf={}, tau={}", b0, muz,
-          //              (pol == Polarization::E ? "E" : "O"), oi, tau);
+          std::println(fp, "{:.2f} {:.2f} {:.2f} {} {:.16e}", b0, muz, oi,
+                       (pol == Polarization::E ? 1 : 0), tau);
         }
       }
     }
   }
+  std::fclose(fp);
 }

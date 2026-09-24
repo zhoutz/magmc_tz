@@ -145,7 +145,7 @@ def calc_optical_depth(b0, muz, omega_inf, pol):
 
 output_path = "table/bench_od.txt"
 with open(output_path, "w") as f:
-    f.write("# b0 muz pol omega_inf tau\n")
+    # f.write("# b0 muz pol omega_inf tau\n")
     for b0, muz, oi, pol in product(
         np.linspace(-0.1, -0.9, 9),
         np.linspace(0, 0.9, 10),
@@ -156,5 +156,5 @@ with open(output_path, "w") as f:
         print(
             f"b0={b0:.2f}, muz={muz:.2f}, pol={pol}, omega_inf={oi:.2f}, tau={tau:.16e}"
         )
-        f.write(f"{b0:.2f} {muz:.2f} {0 if pol == 'O' else 1} {oi:.2f} {tau:.16e}\n")
+        f.write(f"{b0:.2f} {muz:.2f} {oi:.2f} {0 if pol == 'O' else 1} {tau:.16e}\n")
     print(f"Results written to {output_path}")

@@ -1,5 +1,5 @@
 all: build
-	g++-16 ode/main.cpp -o build/main -std=c++23
+	g++-16 src/bench/base.cpp -o build/base -std=c++23
 
 build:
 	mkdir build
