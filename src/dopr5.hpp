@@ -18,7 +18,7 @@ template <int N, class DerivFunc> struct StepperDopr5 {
   using EventFunc = std::function<double(double, YVector const &)>;
 
   DerivFunc const &derivs;
-  double x_old, h_old, h_new;
+  double x_old, h_old, h_new, h_dense;
   YVector y_old, y_new, y_err;
   YVector dydx_old, dydx_new;
   double atol, rtol;
@@ -185,11 +185,12 @@ template <int N, class DerivFunc> struct StepperDopr5 {
       rcont5[i] = h_old * (d1 * dydx_old[i] + d3 * k3[i] + d4 * k4[i] + d5 * k5[i] + d6 * k6[i] +
                            d7 * dydx_new[i]);
     }
+    h_dense = h_old;
   }
 
   YVector dense_out(double x) const {
     YVector ret;
-    double s = (x - x_old) / h_old;
+    double s = (x - x_old) / h_dense;
     double s1 = 1.0 - s;
     for (int i = 0; i < N; i++)
       ret[i] = rcont1[i] + s * (rcont2[i] + s1 * (rcont3[i] + s * (rcont4[i] + s1 * rcont5[i])));

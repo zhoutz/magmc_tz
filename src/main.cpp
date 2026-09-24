@@ -45,9 +45,10 @@ struct PhotonEvolution {
     double omega_c = B_to_omega * B;
     double omega = omega_inf / std::sqrt(1 - rs / r);
     double x = omega_c / omega;
-    double rho = std::sqrt(r_hat.x * r_hat.x + r_hat.y * r_hat.y);
-    double3 theta_hat{r_hat.x * r_hat.z / rho, r_hat.y * r_hat.z / rho, -rho};
-    double3 phi_hat{-r_hat.y / rho, r_hat.x / rho, 0};
+    double rho = std::hypot(r_hat.x, r_hat.y);
+    double3 theta_hat = rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
+                                : double3{std::copysign(1.0, muz), 0, 0};
+    double3 phi_hat = rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
     double mu_in =
         b.x * std::cos(alpha) + std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat));
     std::array<double, 2> betas;
@@ -80,7 +81,7 @@ BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
 int main() {
   for (double b0 : {-0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9}) {
-    Boltzmann fb(-0.75);
+    Boltzmann fb(b0);
     for (double muz : {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}) {
       double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
       double3 n{0, 1, 0};
@@ -105,18 +106,7 @@ int main() {
           while (true) {
             stepper.do_step();
             int event_id = stepper.detect_event();
-            if (event_id != -1) {
-              double r = stepper.y_new[0];
-              double psi = stepper.y_new[1];
-              double alpha = stepper.y_new[2];
-              double tau = stepper.y_new[3];
-
-              if (event_id == 0) {
-                std::println("Photon escaped at r = {}, psi = {}, alpha = {}, tau = {}", r, psi,
-                             alpha, tau);
-                break;
-              }
-            }
+            if (event_id == 0) break;
             stepper.update_old();
           }
           double tau = stepper.y_new[3];
