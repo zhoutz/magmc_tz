@@ -28,10 +28,9 @@ inline Result baseline(BField const &field,Case const &c,Config const &cfg) {
  long steps=0;while(true){if(++steps>2000000)throw std::runtime_error("Step budget exceeded");s.do_step();if(s.detect_event()==0)break;s.update_old();}
  return {s.y_new[3],calls,steps,0,"ok"};
 }
-template<class Solver> int benchmark_main(int argc,char **argv,std::string name,Solver solve) {
+template<class Solver> int benchmark_main(int argc,char **argv,std::string name,Solver solve,Config cfg={},std::string details="") {
  try {
   if (argc<2) throw std::runtime_error("Usage: executable output.csv [tolerance] [parameter] [repeats] [initial_step]");
-  Config cfg;
   if(argc>2) cfg.tol=std::stod(argv[2]);
   if(argc>3) cfg.parameter=std::stod(argv[3]);
   if(argc>4) cfg.repeats=std::stoi(argv[4]);
@@ -69,7 +68,7 @@ template<class Solver> int benchmark_main(int argc,char **argv,std::string name,
   std::sort(batches.begin(),batches.end());
   std::ofstream out(argv[1]); if(!out)throw std::runtime_error("Cannot open output");
   out<<std::setprecision(17);
-  out<<"# method="<<name<<" tolerance="<<cfg.tol<<" parameter="<<cfg.parameter<<" initial_step="<<cfg.initial_step<<" repeats="<<cfg.repeats<<" setup_ms="<<setup_ms<<" batch_median_ms="<<batches[batches.size()/2]<<" batch_min_ms="<<batches.front()<<" batch_max_ms="<<batches.back()<<'\n';
+  out<<"# method="<<name<<" tolerance="<<cfg.tol<<" parameter="<<cfg.parameter<<" initial_step="<<cfg.initial_step<<" repeats="<<cfg.repeats<<" setup_ms="<<setup_ms<<" batch_median_ms="<<batches[batches.size()/2]<<" batch_min_ms="<<batches.front()<<" batch_max_ms="<<batches.back()<<details<<'\n';
   out<<"b0,muz,pol,omega_inf,tau,reference,abs_error,rel_error,microseconds,evaluations,steps,quadrature_evaluations,status\n";
   double maxrel=0; int failed=0, exceptions=0;
   for(size_t i=0;i<cases.size();++i) {

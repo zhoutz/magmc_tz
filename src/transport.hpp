@@ -29,7 +29,7 @@ inline std::array<double,3> distribution_edges(Boltzmann const &fb) {
   auto quantile=[&](double probability) {
     return zriddr([&](double b){
       long n=0;
-      return quadrature::adaptive([&](double v){return positive.f(v);},0.,b,1e-13,1e-12,n)-probability;
+      return quad::adaptive([&](double v){return positive.f(v);},0.,b,1e-13,1e-12,n)-probability;
     },1e-16,1.,1e-14);
   };
   double a=quantile(.001),b=quantile(.5),c=quantile(.999);

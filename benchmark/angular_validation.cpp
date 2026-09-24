@@ -1,4 +1,4 @@
-#include "../output/benchmark_common.hpp"
+#include "benchmark_common.hpp"
 #include <random>
 
 int main(int argc,char **argv) {

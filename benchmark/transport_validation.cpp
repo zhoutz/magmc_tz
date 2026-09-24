@@ -1,4 +1,4 @@
-#include "../output/benchmark_common.hpp"
+#include "benchmark_common.hpp"
 #include <random>
 
 void check(bool value,char const *message){if(!value)throw std::runtime_error(message);}
@@ -29,7 +29,7 @@ int main() {
     double numerical=0;
     for(size_t i=1;i<panels.boundaries.size();++i)numerical+=panels.integrate(panels.boundaries[i-1],panels.boundaries[i],1e-9,1e-7);
     long calls=0;
-    double reference=quadrature::adaptive([&](double theta){
+    double reference=quad::adaptive([&](double theta){
       double D=.125*width*width*std::cos(theta)*std::cos(theta);
       transport::ResonancePoint p{.5*std::log1p(D),0,1};
       return material.opacity(p,D)*.5*width*std::cos(theta);

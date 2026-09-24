@@ -1,6 +1,6 @@
 #pragma once
 #include "resonance.hpp"
-#include "quadrature.hpp"
+#include "quad.hpp"
 #include "roots.hpp"
 #include <vector>
 
@@ -106,7 +106,7 @@ template<class Path, class Material=Medium> struct ResonancePanels {
       if(right.singular && db<1e-4*w)D=rc[0]*db+.5*rc[1]*db*db;
       return medium.opacity(p,D,low,high)*length*w*pi*sa*sb;
     };
-    return quadrature::adaptive(integrand,0,1,atol,rtol,evaluations);
+    return quad::adaptive(integrand,0,1,atol,rtol,evaluations);
   }
 };
 }
