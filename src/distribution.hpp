@@ -28,8 +28,9 @@ struct Boltzmann {
   }
 
   double f(double b) const {
-    if (b * b0 < 0) return 0;
-    if (std::abs(b) >= 1) return 0;
+    if (!std::isfinite(b) || b <= b_min || b >= b_max) {
+      throw std::runtime_error("Invalid b value for Boltzmann distribution");
+    }
     double s = std::sqrt((1 - b) * (1 + b));
     double gm1 = b * b / (s * (1 + s));
     return std::exp(-a * gm1) / (exp_k1 * s * s * s);

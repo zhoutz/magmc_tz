@@ -2,10 +2,7 @@
 #include "constants.hpp"
 #include "distribution.hpp"
 #include "dopr5.hpp"
-#include "init.hpp"
 #include "photon.hpp"
-#include "ran.hpp"
-#include "sample_mup.hpp"
 #include "solve_quadratic.hpp"
 
 #include <array>
@@ -23,7 +20,6 @@ using YVector = std::array<double, 4>;
 struct PhotonEvolution {
   BField const &bfield;
   Boltzmann const &fb;
-  Ran &ran;
   double3 n, e1, e2;
   YVector r_psi_alpha_tau;
   double omega_inf;
@@ -73,142 +69,62 @@ struct PhotonEvolution {
 
     return ret;
   }
-
-  void perform_scattering() {
-    double r = r_psi_alpha_tau[0];
-    double psi = r_psi_alpha_tau[1];
-    double alpha = r_psi_alpha_tau[2];
-
-    double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
-    double muz = r_hat.z;
-    double3 B_sph = bfield.calc_B(r, muz);
-    double B = B_sph.length();
-    double3 b_sph = B_sph / B;
-    double omega_c = B_to_omega * B;
-    double omega = omega_inf / std::sqrt(1 - rs / r);
-    double x = omega_c / omega;
-    double rho = std::sqrt(r_hat.x * r_hat.x + r_hat.y * r_hat.y);
-    double3 theta_hat{r_hat.x * r_hat.z / rho, r_hat.y * r_hat.z / rho, -rho};
-    double3 phi_hat{-r_hat.y / rho, r_hat.x / rho, 0};
-    double mu_in = b_sph.x * std::cos(alpha) +
-                   std::sin(alpha) * (b_sph.y * dot(n, phi_hat) - b_sph.z * dot(n, theta_hat));
-    std::array<double, 2> betas;
-    if (!solve_quadratic(x * x + mu_in * mu_in, -2 * mu_in, 1 - x * x, betas)) {
-      throw std::runtime_error("No valid beta found for scattering");
-    }
-    std::array<double, 2> weights{};
-    for (int i = 0; i < 2; ++i) {
-      double beta = betas[i];
-      double f = fb.f(beta);
-      if (f == 0) continue;
-      double mu_in_p = (mu_in - beta) / (1 - beta * mu_in);
-      double esq = (pol == Polarization::E) ? (0.5) : (0.5 * mu_in_p * mu_in_p);
-      weights[i] = f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 - beta * beta) /
-                   std::abs(mu_in - beta);
-    }
-    double total_weight = weights[0] + weights[1];
-    if (!(total_weight > 0.0) || !std::isfinite(total_weight)) {
-      throw std::runtime_error("Invalid scattering weights");
-    }
-    double rand_val = ran.U() * total_weight;
-    double beta = (rand_val < weights[0]) ? betas[0] : betas[1];
-
-    double mup_out = sample_mup(ran);
-    double mu_out = (mup_out + beta) / (1 + beta * mup_out);
-    double3 b_cart = b_sph.x * r_hat + b_sph.y * theta_hat + b_sph.z * phi_hat;
-    double3 t_hat = ran.unit_perp_to(b_cart);
-    double3 k_out = mu_out * b_cart + std::sqrt(1 - mu_out * mu_out) * t_hat;
-    double alpha_out = std::atan2(cross(k_out, r_hat).length(), dot(k_out, r_hat));
-    double3 e1_out = r_hat;
-    double3 n_out = to_unit(cross(r_hat, k_out));
-    double3 e2_out = cross(n_out, e1_out);
-    double omega_inf_out = omega_inf * (1 - beta * mu_in) / (1 - beta * mu_out);
-    Polarization pol_out =
-        (ran.U() < 1 / (1 + mup_out * mup_out)) ? Polarization::E : Polarization::O;
-
-    n = n_out;
-    e1 = e1_out;
-    e2 = e2_out;
-    r_psi_alpha_tau[1] = 0;
-    r_psi_alpha_tau[2] = alpha_out;
-    r_psi_alpha_tau[3] = 0;
-    pol = pol_out;
-    omega_inf = omega_inf_out;
-
-    if (!std::isfinite(omega_inf)) {
-      throw std::runtime_error("Non-finite omega_inf encountered after scattering");
-    }
-  }
 };
 
 double event_escape(double x, YVector const &y) {
   double r = y[0];
-  return r - 1000 * R_star;
-}
-
-double event_absorption(double x, YVector const &y) {
-  double r = y[0];
-  return r - R_star;
-}
-
-double event_scattering(double x, YVector const &y) {
-  double tau = y[3];
-  return tau;
+  return r - 10000;
 }
 
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
-Boltzmann fb(-0.75);
 
 int main() {
-  Ran ran(1234);
-  Photon photon = init07(ran, R_star, Polarization::O);
-  PhotonEvolution photon_evolution{
-      .bfield = bfield,
-      .fb = fb,
-      .ran = ran,
-      .n = photon.n,
-      .e1 = photon.e1,
-      .e2 = photon.e2,
-      .r_psi_alpha_tau = {photon.r, photon.psi, photon.alpha, 0.0},
-      .omega_inf = photon.omega_inf,
-      .pol = photon.pol,
-  };
+  for (double b0 : {-0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9}) {
+    Boltzmann fb(-0.75);
+    for (double muz : {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}) {
+      double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
+      double3 n{0, 1, 0};
+      for (double oi : {0.01, 0.1, 1., 10., 100.}) {
+        for (Polarization pol : {Polarization::E, Polarization::O}) {
+          PhotonEvolution photon_evolution{
+              .bfield = bfield,
+              .fb = fb,
+              .n = n,
+              .e1 = r_hat,
+              .e2 = cross(n, r_hat),
+              .r_psi_alpha_tau = {R_star, 0.0, 0.0, 0.0},
+              .omega_inf = oi,
+              .pol = pol,
+          };
 
-  StepperDopr5<4, PhotonEvolution> stepper(photon_evolution, 1e-6, 1e-6);
-  stepper.add_event(&event_escape);
-  stepper.add_event(&event_absorption);
-  stepper.add_event(&event_scattering);
-  double target_tau = std::log(ran.U());
-  photon_evolution.r_psi_alpha_tau[3] = target_tau;
-  stepper.init(0.0, 1e-3 * R_star, photon_evolution.r_psi_alpha_tau);
+          StepperDopr5<4, PhotonEvolution> stepper(photon_evolution, 1e-6, 1e-6);
+          stepper.add_event(&event_escape);
+          photon_evolution.r_psi_alpha_tau[3] = 0;
+          stepper.init(0.0, 1e-3 * R_star, photon_evolution.r_psi_alpha_tau);
 
-  while (true) {
-    stepper.do_step();
-    int event_id = stepper.detect_event();
-    if (event_id != -1) {
-      double r = stepper.y_new[0];
-      double psi = stepper.y_new[1];
-      double alpha = stepper.y_new[2];
-      double tau = stepper.y_new[3];
+          while (true) {
+            stepper.do_step();
+            int event_id = stepper.detect_event();
+            if (event_id != -1) {
+              double r = stepper.y_new[0];
+              double psi = stepper.y_new[1];
+              double alpha = stepper.y_new[2];
+              double tau = stepper.y_new[3];
 
-      if (event_id == 0) {
-        std::println("Photon escaped at r = {}, psi = {}, alpha = {}, tau = {}", r, psi, alpha,
-                     tau);
-        break;
-      } else if (event_id == 1) {
-        std::println("Photon absorbed at r = {}, psi = {}, alpha = {}, tau = {}", r, psi, alpha,
-                     tau);
-        break;
-      } else if (event_id == 2) {
-        std::println("Photon scattered at r = {}, psi = {}, alpha = {}, tau = {}", r, psi, alpha,
-                     tau);
-        photon_evolution.r_psi_alpha_tau = stepper.y_new;
-        photon_evolution.perform_scattering();
-        photon_evolution.r_psi_alpha_tau[3] = std::log(ran.U());
-        stepper.init(0, stepper.h_new, photon_evolution.r_psi_alpha_tau);
-        continue;
+              if (event_id == 0) {
+                std::println("Photon escaped at r = {}, psi = {}, alpha = {}, tau = {}", r, psi,
+                             alpha, tau);
+                break;
+              }
+            }
+            stepper.update_old();
+          }
+          double tau = stepper.y_new[3];
+
+          std::println("b0={}, muz={}, pol={}, omega_inf={}, tau={}", b0, muz,
+                       (pol == Polarization::E ? "E" : "O"), oi, tau);
+        }
       }
     }
-    stepper.update_old();
   }
 }
