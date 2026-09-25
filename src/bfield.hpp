@@ -1,12 +1,11 @@
 #pragma once
 
+#include "doubles.hpp"
+#include "hunt.hpp"
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <vector>
-
-#include "doubles.hpp"
-#include "hunt.hpp"
 
 struct BField {
   double B_pole, R_star;

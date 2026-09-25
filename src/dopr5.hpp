@@ -1,7 +1,6 @@
 #pragma once
 
 #include "roots.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
