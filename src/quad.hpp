@@ -23,7 +23,7 @@ struct Quad {
     // error code GSL_EROUND means qags make max effort,
     // this will happen with probability ~0.2%,
     // which should be acceptable.
-    if (status != GSL_SUCCESS && status != GSL_EROUND ||
+    if (status != GSL_SUCCESS && status != GSL_EROUND && status != GSL_ESING ||
         !std::isfinite(result) || !std::isfinite(abserr)) {
       std::fprintf(
           stderr, "qags failed: %s (status=%d, result=%.17g, abserr=%.17g)\n",

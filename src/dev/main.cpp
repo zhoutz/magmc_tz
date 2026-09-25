@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <print>
 
 constexpr double M_star = 1.4;                                    // M_sun
 constexpr double R_star = 10;                                     // km
@@ -290,21 +292,27 @@ BField bfield("table/bfield_t10.txt", B_pole, R_star);
 Boltzmann fb(-0.75);
 
 int main() {
-  //
   PhotonEvolution pe(bfield, fb, 7774);
-  pe.init_random_radial(1.0, Polarization::E);
-  while (true) {
-    auto result = pe.evolve_geodesic();
-    if (result == PhotonEvolution::EvolveResult::Escaped) {
-      auto [omega_inf, muz] = pe.escaped_data;
-      printf("Escaped: omega_inf = %g, muz = %g\n", omega_inf, muz);
-      break;
-    } else if (result == PhotonEvolution::EvolveResult::Absorbed) {
-      printf("Photon absorbed by the star.\n");
-      break;
-    } else if (result == PhotonEvolution::EvolveResult::Scattered) {
-      pe.perform_scattering();
-      printf("Photon scattered. New state initialized.\n");
+  constexpr int N = 1e4;
+  FILE *f = std::fopen("output/main.txt", "w");
+  for (int i = 0; i < N; ++i) {
+    pe.init_random_radial(1.0, Polarization::E);
+    while (true) {
+      auto result = pe.evolve_geodesic();
+      if (result == PhotonEvolution::EvolveResult::Escaped) {
+        auto [omega_inf, muz] = pe.escaped_data;
+        // printf("Escaped: omega_inf = %g, muz = %g\n", omega_inf, muz);
+        std::println(f, "{} {}", omega_inf, muz);
+        std::print("{}/{}\r", i + 1, N);
+        break;
+      } else if (result == PhotonEvolution::EvolveResult::Absorbed) {
+        // printf("Photon absorbed by the star.\n");
+        break;
+      } else if (result == PhotonEvolution::EvolveResult::Scattered) {
+        pe.perform_scattering();
+        // printf("Photon scattered. New state initialized.\n");
+      }
     }
   }
+  std::fclose(f);
 }
