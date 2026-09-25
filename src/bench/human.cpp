@@ -10,7 +10,6 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <print>
 
 constexpr double M_star = 1.4;                                    // M_sun
