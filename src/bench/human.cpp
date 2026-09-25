@@ -196,8 +196,13 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
         gl = gr;
       }
       std::sort(cuts.begin(), cuts.end());
-      // D = 0 and beta = 0 coincide when mu = 0.
-      cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+      cuts.erase(std::unique(cuts.begin(), cuts.end(),
+                             [](double a, double b) {
+                               return std::abs(a - b) <=
+                                      4 * std::numeric_limits<double>::epsilon() *
+                                          (1 + std::max(std::abs(a), std::abs(b)));
+                             }),
+                 cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
         double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
         auto gm = pe.geo(stepper.dense_out(m));
