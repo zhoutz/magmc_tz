@@ -20,6 +20,9 @@ struct Quad {
     int status = gsl_integration_qags(&gf, a, b, epsabs, epsrel, limit,
                                       workspace, &result, &abserr);
 
+    // error code GSL_EROUND means qags make max effort,
+    // this will happen with probability ~0.2%,
+    // which should be acceptable.
     if (status != GSL_SUCCESS && status != GSL_EROUND ||
         !std::isfinite(result) || !std::isfinite(abserr)) {
       std::fprintf(
