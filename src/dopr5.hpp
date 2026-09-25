@@ -116,6 +116,7 @@ template <int N, class DerivFunc> struct StepperDopr5 {
       try_step();
       if (success(error())) break;
     }
+    prepare_dense();
   }
 
   void update_old() {
@@ -217,7 +218,7 @@ template <int N, class DerivFunc> struct StepperDopr5 {
 
     if (std::any_of(events.begin(), events.end(),
                     [](Event const &event) { return event.active; })) {
-      prepare_dense();
+      // prepare_dense();
       double x_tol = 4 * EPS * (1 + std::abs(x_old));
       for (auto &event : events) {
         if (event.active) {
