@@ -62,7 +62,7 @@ struct PhotonEvolution {
       ret += f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 + beta) * (1 - beta) /
              std::abs(mu_in - beta);
     }
-    ret *= (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_bar()) * r);
+    ret *= (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_mean) * r);
 
     if (!std::isfinite(ret)) {
       throw std::runtime_error("Non-finite dtaudl encountered");
@@ -80,7 +80,7 @@ double event_escape(double x, YVector const &y) {
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
 double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
-  Boltzmann fb(b0);
+  Boltzmann fb(b0,10);
   double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
   double3 n{0, 1, 0};
 

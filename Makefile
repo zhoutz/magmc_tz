@@ -8,11 +8,11 @@ base:
 	
 ref:
 	g++-16 src/bench/ref.cpp -o build/ref -std=c++23 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib -O3
-	build/ref
+	time build/ref
 	
 human:
 	g++-16 src/bench/human.cpp -o build/human -std=c++23 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib -O3
-	build/human
+	time build/human
 
 build:
 	mkdir build

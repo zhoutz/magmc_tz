@@ -161,7 +161,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
   double tau = 0;
 
   while (true) {
-    stepper.do_step(1e-2 * stepper.y_old[0]);
+    stepper.do_step(1e-1 * stepper.y_old[0]);
     int event_id = stepper.detect_event();
 
     {
@@ -170,12 +170,14 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
       int n_scan = 8;
       double l = xl;
       auto gl = pe.geo(stepper.dense_out(l));
+      // Resolve cuts to floating-point precision (xacc = 0). A displaced
+      // D = 0 endpoint can leave a tiny interval beside the 1/sqrt(D) singularity.
       for (int i = 1; i <= n_scan; ++i) {
         double r = xl + (xr - xl) * i / n_scan;
         auto gr = pe.geo(stepper.dense_out(r));
         if (gl.D * gr.D < 0) {
           cuts.push_back(
-              zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; }, l, r, 1e-10 * r));
+              zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; }, l, r, 0.0));
         }
         for (double beta : fb.knots) {
           auto bound = [beta](double x, double mu) {
@@ -187,22 +189,24 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
                   auto g = pe.geo(stepper.dense_out(x));
                   return bound(g.x, g.mu);
                 },
-                l, r, 1e-10 * r));
+                l, r, 0.0));
           }
         }
         l = r;
         gl = gr;
       }
       std::sort(cuts.begin(), cuts.end());
+      // D = 0 and beta = 0 coincide when mu = 0.
+      cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
         double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
         auto gm = pe.geo(stepper.dense_out(m));
         if (gm.D <= 0) continue;
-        auto integrand = [&](double x) {
-          auto y = stepper.dense_out(x);
+        auto integrand = [&](double path_length) {
+          auto y = stepper.dense_out(path_length);
           auto g = pe.geo(y);
           std::array<double, 2> betas;
-          if (!solve_quadratic(g.x * x + g.mu * g.mu, -2 * g.mu, (1 + g.x) * (1 - g.x), betas))
+          if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu, (1 + g.x) * (1 - g.x), betas))
             return 0.0;
           double ret = 0;
           for (double beta : betas) {
