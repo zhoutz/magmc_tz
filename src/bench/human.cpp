@@ -1,3 +1,9 @@
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <print>
+
 #include "../bfield.hpp"
 #include "../constants.hpp"
 #include "../distribution.hpp"
@@ -5,12 +11,6 @@
 #include "../photon.hpp"
 #include "../quad.hpp"
 #include "../solve_quadratic.hpp"
-
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdio>
-#include <print>
 
 constexpr double M_star = 1.4;                                    // M_sun
 constexpr double R_star = 10;                                     // km
@@ -57,13 +57,28 @@ struct PhotonEvolution {
         b.x * std::cos(alpha) +
             std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat)),
         -1.0, 1.0);
+    double D = std::fma(x, x, (mu - 1) * (mu + 1));
+    double overlap = (pol == Polarization::E) ? (0.5) : (0.5 * D / (x * x));
     return Geometry{
         .x = x,
         .mu = mu,
-        .D = std::fma(x, x, (mu - 1) * (mu + 1)),
+        .D = D,
         .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) *
-                fb.inv_abs_b_mean / r,
+                fb.inv_abs_b_mean * x * x * overlap / (r * std::sqrt(D)),
     };
+  }
+
+  auto rate(std::array<double, 2> const &betas) const {
+    std::array<double, 2> ret{};
+    for (int i = 0; i < 2; ++i) {
+      double beta = betas[i];
+      double f = fb.f(beta);
+      if (f == 0)
+        continue;
+      double t1 = (1 + beta) * (1 - beta);
+      ret[i] = f * t1 * std::sqrt(t1);
+    }
+    return ret;
   }
 };
 
@@ -135,27 +150,17 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol,
       std::sort(cuts.begin(), cuts.end());
       cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
-        double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
-        if (pe.geo(stepper.dense_out(m)).D <= 0)
+        double l = cuts[i], r = cuts[i + 1];
+        if (pe.geo(stepper.dense_out(std::midpoint(l, r))).D <= 0)
           continue;
         auto integrand = [&](double path_length) {
-          auto y = stepper.dense_out(path_length);
-          auto g = pe.geo(y);
+          auto g = pe.geo(stepper.dense_out(path_length));
           std::array<double, 2> betas;
           if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu,
                                (1 + g.x) * (1 - g.x), betas))
             return 0.0;
-          double ret = 0;
-          for (double beta : betas) {
-            double f = fb.f(beta);
-            if (f == 0)
-              continue;
-            double overlap =
-                (pol == Polarization::E) ? (0.5) : (0.5 * g.D / (g.x * g.x));
-            ret += f * overlap * (1 - beta * g.mu) * (1 + beta) * (1 - beta) *
-                   g.x / std::sqrt(g.D);
-          }
-          return ret * g.pref;
+          auto rates = pe.rate(betas);
+          return (rates[0] + rates[1]) * g.pref;
         };
         double dtau = pe.quad.qags(integrand, l, r, quad_atol, quad_rtol);
         tau += dtau;

@@ -150,12 +150,11 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol,
       std::sort(cuts.begin(), cuts.end());
       cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
-        double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
-        if (pe.geo(stepper.dense_out(m)).D <= 0)
+        double l = cuts[i], r = cuts[i + 1];
+        if (pe.geo(stepper.dense_out(std::midpoint(l, r))).D <= 0)
           continue;
         auto integrand = [&](double path_length) {
-          auto y = stepper.dense_out(path_length);
-          auto g = pe.geo(y);
+          auto g = pe.geo(stepper.dense_out(path_length));
           std::array<double, 2> betas;
           if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu,
                                (1 + g.x) * (1 - g.x), betas))
