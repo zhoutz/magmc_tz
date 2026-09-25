@@ -13,6 +13,10 @@ ref:
 human:
 	g++-16 src/bench/human.cpp -o build/human -std=c++23 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib -O3
 	time build/human
+	
+main:
+	g++-16 src/dev/main.cpp -o build/main -std=c++23 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib -O3
+	time build/main
 
 build:
 	mkdir build
