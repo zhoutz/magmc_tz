@@ -75,6 +75,13 @@ struct PhotonEvolution {
     stepper.init(0.0, 1e-3 * R_star, {r0, psi0, alpha0});
   }
 
+  void init_random_radial(double omega_inf, Polarization pol) {
+    double3 e1 = ran.point_on_unit_sphere();
+    double3 n = ran.unit_perp_to(e1);
+    double3 e2 = cross(n, e1);
+    init(n, e1, e2, omega_inf, pol, R_star, 0., 0.);
+  }
+
   struct Geometry {
     double x, mu, D, pref;
   };
@@ -124,7 +131,7 @@ struct PhotonEvolution {
   enum class EvolveResult { Absorbed, Escaped, Scattered };
 
   struct EscapedData {
-
+    double omega_inf, muz;
   } escaped_data;
 
   struct ScatteredData {
@@ -185,11 +192,27 @@ struct PhotonEvolution {
         };
         double dtau = quad.qags(integrand, l, r, quad_atol, quad_rtol);
 
-        if (tau + dtau == 0) {
-          return EvolveResult::Scattered;
-        }
+        if (tau < 0 && tau + dtau >= 0) {
+          double scattered_point = r;
+          if (tau + dtau > 0) {
+          }
 
-        if (tau < 0 && tau + dtau > 0) {
+          auto r_psi_alpha = stepper.dense_out(scattered_point);
+          auto g = geo(r_psi_alpha);
+          std::array<double, 2> betas;
+          if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu,
+                               (1 + g.x) * (1 - g.x), betas)) {
+            throw std::runtime_error("No valid beta at scattering point");
+          }
+          auto rates = rate(betas);
+          double sum_rates = rates[0] + rates[1];
+          if (sum_rates <= 0.0 || !std::isfinite(sum_rates)) {
+            throw std::runtime_error("Invalid scattering rates");
+          }
+
+          scattered_data.r_psi_alpha = r_psi_alpha;
+          scattered_data.beta =
+              (ran.U() * sum_rates < rates[0]) ? betas[0] : betas[1];
           return EvolveResult::Scattered;
         }
         tau += dtau;
@@ -198,7 +221,10 @@ struct PhotonEvolution {
       if (event_id == 0) {
         return EvolveResult::Absorbed;
       } else if (event_id == 1) {
-        auto [r, psi, alpha] = stepper.y_old;
+        auto [r, psi, alpha] = stepper.y_new;
+        double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
+        escaped_data.omega_inf = omega_inf;
+        escaped_data.muz = std::clamp(r_hat.z, -1.0, 1.0);
         return EvolveResult::Escaped;
       }
       stepper.update_old();
@@ -250,20 +276,10 @@ struct PhotonEvolution {
 };
 
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
-
-
+Boltzmann fb(-0.75);
 
 int main() {
-  std::FILE *fp = std::fopen("output/main.txt", "w");
-  for (double b0 : {-0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9}) {
-    Boltzmann fb(b0);
-    for (double muz : {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}) {
-      for (double oi : {0.01, 0.1, 1., 10., 100.}) {
-        for (Polarization pol : {Polarization::E, Polarization::O}) {
-          PhotonEvolution pe(bfield, fb, 42);
-        }
-      }
-    }
-  }
-  std::fclose(fp);
+  //
+  PhotonEvolution pe(bfield, fb, 42);
+  pe.init_random_radial(1.0, Polarization::E);
 }
