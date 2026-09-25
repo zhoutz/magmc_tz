@@ -69,7 +69,7 @@ double event_escape(double x, YVector const &y) { return y[0] - 10000; }
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
 double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 10,
-                           int n_scan = 8, double atol = 1e-10, double rtol = 1e-10) {
+                           int n_scan = 8, double atol = 1e-10, double rtol = 1e-9) {
   Boltzmann fb(b0, n_knots);
   double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
   double3 n{0, 1, 0};
