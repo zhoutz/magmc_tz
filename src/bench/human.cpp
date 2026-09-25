@@ -61,42 +61,6 @@ struct PhotonEvolution {
         .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_mean) * r),
     };
   }
-
-  double calc_dtaudl(double3 n, double3 e1, double3 e2, double r, double psi, double alpha,
-                     double omega_inf, Polarization pol) const {
-    double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
-    double muz = r_hat.z;
-    double3 B_vec = bfield.calc_B(r, muz);
-    double B = B_vec.length();
-    double3 b = B_vec / B;
-    double omega_c = B_to_omega * B;
-    double omega = omega_inf / std::sqrt(1 - rs / r);
-    double x = omega_c / omega;
-    double rho = std::hypot(r_hat.x, r_hat.y);
-    double3 theta_hat = rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
-                                : double3{std::copysign(1.0, muz), 0, 0};
-    double3 phi_hat = rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
-    double mu_in =
-        b.x * std::cos(alpha) + std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat));
-    std::array<double, 2> betas;
-    if (!solve_quadratic(x * x + mu_in * mu_in, -2 * mu_in, (1 + x) * (1 - x), betas)) return 0;
-    double ret = 0;
-    for (double beta : betas) {
-      double f = fb.f(beta);
-      if (f == 0) continue;
-      double mup_in = (mu_in - beta) / (1 - beta * mu_in);
-      double esq = (pol == Polarization::E) ? (0.5) : (0.5 * mup_in * mup_in);
-      ret += f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 + beta) * (1 - beta) /
-             std::abs(mu_in - beta);
-    }
-    // ret *= (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_bar()) * r);
-
-    if (!std::isfinite(ret)) {
-      throw std::runtime_error("Non-finite dtaudl encountered");
-    }
-
-    return ret;
-  }
 };
 
 double event_absorb(double x, YVector const &y) { return y[0] - R_star; }
@@ -123,40 +87,6 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
   stepper.add_event(&event_absorb);
   stepper.add_event(&event_escape);
 
-  // stepper.add_event([&](double, YVector const &y) {
-  //   auto [r, psi, alpha] = y;
-  //   auto e1 = photon_evolution.e1;
-  //   auto e2 = photon_evolution.e2;
-  //   auto omega_inf = photon_evolution.omega_inf;
-
-  //   double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
-  //   double muz = r_hat.z;
-  //   double3 B_vec = bfield.calc_B(r, muz);
-  //   double B = B_vec.length();
-  //   double3 b = B_vec / B;
-  //   double omega_c = B_to_omega * B;
-  //   double omega = omega_inf / std::sqrt(1 - rs / r);
-  //   double x = omega_c / omega;
-  //   double rho = std::hypot(r_hat.x, r_hat.y);
-  //   double3 theta_hat = rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
-  //                               : double3{std::copysign(1.0, muz), 0, 0};
-  //   double3 phi_hat = rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
-  //   double mu_in =
-  //       b.x * std::cos(alpha) + std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n,
-  //       theta_hat));
-
-  //   return std::fma(x, x, (mu_in - 1) * (mu_in + 1));
-  // });
-  // beta = 0 is also a boundary of the one-sided velocity distribution.
-  // Split there even when the quadratic discriminant is still positive.
-  // stepper.add_event([&](double, YVector const &y) {
-  //   double r = y[0];
-  //   return B_to_omega * bfield.calc_B(r, muz).length() * std::sqrt(1 - rs / r) / oi - 1;
-  // });
-  // These rays start with alpha = 0 and stay radial: mu_in is constant and
-  // omega_c / omega decreases outward. For counter-streaming particles the
-  // last supported root ends at beta = 0; otherwise it ends at discriminant = 0.
-  // const bool stop_at_beta_zero = b0 * bfield.calc_B(R_star, muz).x <= 0;
   stepper.init(0.0, 1e-3 * R_star, {R_star, 0.0, 0.0});
   double tau = 0;
 
@@ -170,8 +100,6 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
       int n_scan = 8;
       double l = xl;
       auto gl = pe.geo(stepper.dense_out(l));
-      // Resolve cuts to floating-point precision (xacc = 0). A displaced
-      // D = 0 endpoint can leave a tiny interval beside the 1/sqrt(D) singularity.
       for (int i = 1; i <= n_scan; ++i) {
         double r = xl + (xr - xl) * i / n_scan;
         auto gr = pe.geo(stepper.dense_out(r));
