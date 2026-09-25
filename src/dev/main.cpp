@@ -94,9 +94,9 @@ struct PhotonEvolution {
     double3 b = B_vec / B;
     double x = B_to_omega * B * std::sqrt(1 - rs / r) / omega_inf;
     double rho = std::hypot(r_hat.x, r_hat.y);
-    double3 theta_hat =
-        rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
-                : double3{std::copysign(1.0, muz), 0, 0};
+    double3 theta_hat = rho > 0 ? double3{r_hat.x * r_hat.z / rho,
+                                          r_hat.y * r_hat.z / rho, -rho}
+                                : double3{std::copysign(1.0, muz), 0, 0};
     double3 phi_hat =
         rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
     double mu = std::clamp(
@@ -105,12 +105,16 @@ struct PhotonEvolution {
         -1.0, 1.0);
     double D = std::fma(x, x, (mu - 1) * (mu + 1));
     double overlap = (pol == Polarization::E) ? (0.5) : (0.5 * D / (x * x));
+    double pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) *
+                  fb.inv_abs_b_mean * x * x * overlap / (r * std::sqrt(D));
+    if (!std::isfinite(pref) || pref < 0) {
+      pref = 0;
+    }
     return Geometry{
         .x = x,
         .mu = mu,
         .D = D,
-        .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) *
-                fb.inv_abs_b_mean * x * x * overlap / (r * std::sqrt(D)),
+        .pref = pref,
     };
   }
 
@@ -195,10 +199,12 @@ struct PhotonEvolution {
           double scattered_point = r;
           if (tau + dtau > 0) {
             auto func = [&](double r) {
+              if (l == r)
+                return tau;
               return tau + quad.qags(integrand, l, r, quad_atol, quad_rtol);
             };
             auto const &dfunc = integrand;
-            scattered_point = rtsafe(func, dfunc, l, r, 0);
+            scattered_point = rtsafe(func, dfunc, l, r, orbit_atol);
           }
 
           auto r_psi_alpha = stepper.dense_out(scattered_point);
@@ -260,22 +266,23 @@ struct PhotonEvolution {
     double3 t_hat = ran.unit_perp_to(b_cartesian);
     double3 k_out =
         mu_out * b_cartesian + std::sqrt(1 - mu_out * mu_out) * t_hat;
-    double alpha_out =
-        std::atan2(cross(k_out, r_hat).length(), dot(k_out, r_hat));
+    double cross_len = cross(r_hat, k_out).length();
+    double alpha_out = std::atan2(cross_len, dot(k_out, r_hat));
+    double3 n_out = (cross_len < 1e-10) ? ran.unit_perp_to(r_hat)
+                                        : cross(r_hat, k_out) / cross_len;
     double3 e1_out = r_hat;
-    double3 n_out = to_unit(cross(r_hat, k_out));
     double3 e2_out = cross(n_out, e1_out);
     double omega_inf_out = omega_inf * (1 - beta * mu) / (1 - beta * mu_out);
     Polarization pol_out = (ran.U() < 1 / (1 + mup_out * mup_out))
                                ? Polarization::E
                                : Polarization::O;
 
-    init(n_out, e1_out, e2_out, omega_inf_out, pol_out, r, 0, alpha_out);
-
-    if (!std::isfinite(omega_inf)) {
+    if (!std::isfinite(omega_inf_out)) {
       throw std::runtime_error(
           "Non-finite omega_inf encountered after scattering");
     }
+
+    init(n_out, e1_out, e2_out, omega_inf_out, pol_out, r, 0, alpha_out);
   }
 };
 
@@ -284,7 +291,7 @@ Boltzmann fb(-0.75);
 
 int main() {
   //
-  PhotonEvolution pe(bfield, fb, 42);
+  PhotonEvolution pe(bfield, fb, 7774);
   pe.init_random_radial(1.0, Polarization::E);
   while (true) {
     auto result = pe.evolve_geodesic();

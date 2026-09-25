@@ -8,6 +8,7 @@
 struct Quad {
   static constexpr size_t limit = 2048;
   gsl_integration_workspace *workspace = gsl_integration_workspace_alloc(limit);
+  Quad() { gsl_set_error_handler_off(); }
   ~Quad() { gsl_integration_workspace_free(workspace); }
 
   template <class F>
@@ -19,8 +20,8 @@ struct Quad {
     int status = gsl_integration_qags(&gf, a, b, epsabs, epsrel, limit,
                                       workspace, &result, &abserr);
 
-    if (status != GSL_SUCCESS || !std::isfinite(result) ||
-        !std::isfinite(abserr)) {
+    if (status != GSL_SUCCESS && status != GSL_EROUND ||
+        !std::isfinite(result) || !std::isfinite(abserr)) {
       std::fprintf(
           stderr, "qags failed: %s (status=%d, result=%.17g, abserr=%.17g)\n",
           status == GSL_SUCCESS ? "non-finite output" : gsl_strerror(status),

@@ -159,7 +159,7 @@ double rtsafe(F const &func, DF const &dfunc, double x1, double x2,
       dxold = dx;
       dx = 0.5 * (xh - xl);
       rts = xl + dx;
-      if (xl == rts)
+      if (xl == rts || rts == xh)
         return rts;
     } else {
       dxold = dx;
