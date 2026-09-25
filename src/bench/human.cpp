@@ -144,7 +144,8 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
           }
           return ret * g.pref;
         };
-        tau += pe.quad.qags(integrand, l, r, atol, rtol);
+        double dtau = pe.quad.qags(integrand, l, r, atol, rtol);
+        tau += dtau;
       }
     }
 
