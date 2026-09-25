@@ -3,7 +3,8 @@
 #include "../distribution.hpp"
 #include "../dopr5.hpp"
 #include "../photon.hpp"
-#include "../qags.hpp"
+// #include "../qags.hpp"
+#include "../quad.hpp"
 #include "../solve_quadratic.hpp"
 
 #include <algorithm>
@@ -23,6 +24,7 @@ using YVector = std::array<double, 3>;
 struct PhotonEvolution {
   BField const &bfield;
   Boltzmann const &fb;
+  Quad quad;
   double3 n, e1, e2;
   double omega_inf;
   Polarization pol;
@@ -68,7 +70,7 @@ double event_escape(double x, YVector const &y) { return y[0] - 10000; }
 
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
-double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 10,
+double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 8,
                            int n_scan = 8, double atol = 1e-10, double rtol = 1e-9) {
   Boltzmann fb(b0, n_knots);
   double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
@@ -92,7 +94,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
   double tau = 0;
 
   while (true) {
-    stepper.do_step(1e-1 * stepper.y_old[0]);
+    stepper.do_step(0.1 * stepper.y_old[0]);
     int event_id = stepper.detect_event();
 
     {
@@ -126,8 +128,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
       cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
         double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
-        auto gm = pe.geo(stepper.dense_out(m));
-        if (gm.D <= 0) continue;
+        if (pe.geo(stepper.dense_out(m)).D <= 0) continue;
         auto integrand = [&](double path_length) {
           auto y = stepper.dense_out(path_length);
           auto g = pe.geo(y);
@@ -143,7 +144,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
           }
           return ret * g.pref;
         };
-        tau += qags(integrand, l, r, atol, rtol);
+        tau += pe.quad.qags(integrand, l, r, atol, rtol);
       }
     }
 
