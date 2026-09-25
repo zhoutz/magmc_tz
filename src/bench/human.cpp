@@ -3,7 +3,6 @@
 #include "../distribution.hpp"
 #include "../dopr5.hpp"
 #include "../photon.hpp"
-// #include "../qags.hpp"
 #include "../quad.hpp"
 #include "../solve_quadratic.hpp"
 
@@ -60,7 +59,7 @@ struct PhotonEvolution {
         .x = x,
         .mu = mu,
         .D = std::fma(x, x, (mu - 1) * (mu + 1)),
-        .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_mean) * r),
+        .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) * fb.inv_abs_b_mean / r,
     };
   }
 };
@@ -70,8 +69,9 @@ double event_escape(double x, YVector const &y) { return y[0] - 10000; }
 
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
-double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 8,
-                           int n_scan = 8, double atol = 1e-10, double rtol = 1e-9) {
+double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 4,
+                           int n_scan = 4, double orbit_atol = 1e-10, double orbit_rtol = 1e-10,
+                           double quad_atol = 1e-8, double quad_rtol = 1e-8) {
   Boltzmann fb(b0, n_knots);
   double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
   double3 n{0, 1, 0};
@@ -86,12 +86,13 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
       .pol = pol,
   };
 
-  StepperDopr5<3, PhotonEvolution> stepper(pe, atol, rtol);
+  StepperDopr5<3, PhotonEvolution> stepper(pe, orbit_atol, orbit_rtol);
   stepper.add_event(&event_absorb);
   stepper.add_event(&event_escape);
 
   stepper.init(0.0, 1e-3 * R_star, {R_star, 0.0, 0.0});
   double tau = 0;
+  std::vector<double> cuts;
 
   while (true) {
     stepper.do_step(0.1 * stepper.y_old[0]);
@@ -99,7 +100,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
 
     {
       double xl = stepper.x_old, xr = stepper.x_old + stepper.h_old;
-      std::vector<double> cuts{xl, xr};
+      cuts.clear(), cuts.push_back(xl), cuts.push_back(xr);
       double l = xl;
       auto gl = pe.geo(stepper.dense_out(l));
       for (int i = 1; i <= n_scan; ++i) {
@@ -109,9 +110,8 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
           cuts.push_back(zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; }, l, r, 0));
         }
         for (double beta : fb.knots) {
-          auto bound = [beta](double x, double mu) {
-            return x * std::sqrt((1 - beta) * (1 + beta)) + beta * mu - 1;
-          };
+          double ginv = std::sqrt((1 - beta) * (1 + beta));
+          auto bound = [beta, ginv](double x, double mu) { return x * ginv + beta * mu - 1; };
           if (bound(gl.x, gl.mu) * bound(gr.x, gr.mu) <= 0) {
             cuts.push_back(zriddr(
                 [&](double x) {
@@ -144,7 +144,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
           }
           return ret * g.pref;
         };
-        double dtau = pe.quad.qags(integrand, l, r, atol, rtol);
+        double dtau = pe.quad.qags(integrand, l, r, quad_atol, quad_rtol);
         tau += dtau;
       }
     }

@@ -8,7 +8,7 @@
 
 struct Boltzmann {
   double b0, exp_k1, a;
-  double b_min, b_max, b_mean;
+  double b_min, b_max, b_mean, inv_abs_b_mean;
   std::vector<double> knots;
 
   Boltzmann(double b0, int n_knots) : b0(b0) {
@@ -32,6 +32,7 @@ struct Boltzmann {
     a = s0 * (1 + s0) / (b0 * b0);
     exp_k1 = bessel_K1_scaled(a);
     b_mean = std::copysign(1 / (a * exp_k1), b0);
+    inv_abs_b_mean = 1 / std::abs(b_mean);
   }
 
   double f(double b) const {
