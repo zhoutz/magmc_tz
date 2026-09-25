@@ -136,7 +136,7 @@ struct PhotonEvolution {
   enum class EvolveResult { Absorbed, Escaped, Scattered };
 
   struct EscapedData {
-    double omega_inf, muz;
+    double omega_inf, muk;
   } escaped_data;
 
   struct ScatteredData {
@@ -235,8 +235,10 @@ struct PhotonEvolution {
       } else if (event_id == 1) {
         auto [r, psi, alpha] = stepper.y_new;
         double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
+        double3 psi_hat = cross(n, r_hat);
+        double3 k_hat = std::cos(alpha) * r_hat + std::sin(alpha) * psi_hat;
         escaped_data.omega_inf = omega_inf;
-        escaped_data.muz = std::clamp(r_hat.z, -1.0, 1.0);
+        escaped_data.muk = std::clamp(k_hat.z, -1.0, 1.0);
         return EvolveResult::Escaped;
       }
       stepper.update_old();
@@ -300,9 +302,9 @@ int main() {
     while (true) {
       auto result = pe.evolve_geodesic();
       if (result == PhotonEvolution::EvolveResult::Escaped) {
-        auto [omega_inf, muz] = pe.escaped_data;
-        // printf("Escaped: omega_inf = %g, muz = %g\n", omega_inf, muz);
-        std::println(f, "{} {}", omega_inf, muz);
+        auto [omega_inf, muk] = pe.escaped_data;
+        // printf("Escaped: omega_inf = %g, muk = %g\n", omega_inf, muk);
+        std::println(f, "{} {}", omega_inf, muk);
         std::print("{}/{}\r", i + 1, N);
         break;
       } else if (result == PhotonEvolution::EvolveResult::Absorbed) {
