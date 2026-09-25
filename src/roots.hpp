@@ -126,3 +126,57 @@ double zriddr(F const &func, double x1, double x2, double xacc) {
 }
 
 #endif
+
+template <class F, class DF>
+double rtsafe(F const &func, DF const &dfunc, double x1, double x2,
+              double xacc) {
+  constexpr int MAXIT = 100;
+  double xh, xl;
+  double fl = func(x1);
+  double fh = func(x2);
+  if ((fl > 0.0 && fh > 0.0) || (fl < 0.0 && fh < 0.0)) {
+    throw std::runtime_error("Root must be bracketed in rtsafe");
+  }
+  if (fl == 0.0)
+    return x1;
+  if (fh == 0.0)
+    return x2;
+  if (fl < 0.0) {
+    xl = x1;
+    xh = x2;
+  } else {
+    xh = x1;
+    xl = x2;
+  }
+  double rts = std::midpoint(x1, x2);
+  double dxold = std::abs(x2 - x1);
+  double dx = dxold;
+  double f = func(rts);
+  double df = dfunc(rts);
+  for (int j = 0; j < MAXIT; j++) {
+    if ((((rts - xh) * df - f) * ((rts - xl) * df - f) > 0.0) ||
+        (std::abs(2.0 * f) > std::abs(dxold * df))) {
+      dxold = dx;
+      dx = 0.5 * (xh - xl);
+      rts = xl + dx;
+      if (xl == rts)
+        return rts;
+    } else {
+      dxold = dx;
+      dx = f / df;
+      double temp = rts;
+      rts -= dx;
+      if (temp == rts)
+        return rts;
+    }
+    if (std::abs(dx) < xacc)
+      return rts;
+    f = func(rts);
+    df = dfunc(rts);
+    if (f < 0.0)
+      xl = rts;
+    else
+      xh = rts;
+  }
+  throw std::runtime_error("Maximum number of iterations exceeded in rtsafe");
+}

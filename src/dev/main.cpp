@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
 
 constexpr double M_star = 1.4;                                    // M_sun
 constexpr double R_star = 10;                                     // km
@@ -195,6 +194,11 @@ struct PhotonEvolution {
         if (tau < 0 && tau + dtau >= 0) {
           double scattered_point = r;
           if (tau + dtau > 0) {
+            auto func = [&](double r) {
+              return tau + quad.qags(integrand, l, r, quad_atol, quad_rtol);
+            };
+            auto const &dfunc = integrand;
+            scattered_point = rtsafe(func, dfunc, l, r, 0);
           }
 
           auto r_psi_alpha = stepper.dense_out(scattered_point);
@@ -282,4 +286,18 @@ int main() {
   //
   PhotonEvolution pe(bfield, fb, 42);
   pe.init_random_radial(1.0, Polarization::E);
+  while (true) {
+    auto result = pe.evolve_geodesic();
+    if (result == PhotonEvolution::EvolveResult::Escaped) {
+      auto [omega_inf, muz] = pe.escaped_data;
+      printf("Escaped: omega_inf = %g, muz = %g\n", omega_inf, muz);
+      break;
+    } else if (result == PhotonEvolution::EvolveResult::Absorbed) {
+      printf("Photon absorbed by the star.\n");
+      break;
+    } else if (result == PhotonEvolution::EvolveResult::Scattered) {
+      pe.perform_scattering();
+      printf("Photon scattered. New state initialized.\n");
+    }
+  }
 }
