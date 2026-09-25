@@ -7,7 +7,8 @@ struct UniformHunt {
   double x_min, x_max;
   int n;
 
-  UniformHunt(double x_min, double x_max, int n) : x_min(x_min), x_max(x_max), n(n) {}
+  UniformHunt(double x_min, double x_max, int n)
+      : x_min(x_min), x_max(x_max), n(n) {}
 
   auto operator()(double &x) {
     int i;
@@ -16,7 +17,8 @@ struct UniformHunt {
     if (x <= x_min) {
       if (x < x_min) {
         throw std::runtime_error(std::format(
-            "UniformHunt::operator(): x = {} is out of bounds [{}, {}]: {}", x, x_min, x_max, n));
+            "UniformHunt::operator(): x = {} is out of bounds [{}, {}]: {}", x,
+            x_min, x_max, n));
       }
       i = 0;
       a = 0;
@@ -26,7 +28,8 @@ struct UniformHunt {
     if (x >= x_max) {
       if (x > x_max) {
         throw std::runtime_error(std::format(
-            "UniformHunt::operator(): x = {} is out of bounds [{}, {}]: {}", x, x_min, x_max, n));
+            "UniformHunt::operator(): x = {} is out of bounds [{}, {}]: {}", x,
+            x_min, x_max, n));
       }
       i = n - 2;
       a = 1;

@@ -54,7 +54,8 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
 #include <numeric>
 #include <stdexcept>
 
-template <class F> double zriddr(F const &func, double x1, double x2, double xacc) {
+template <class F>
+double zriddr(F const &func, double x1, double x2, double xacc) {
   constexpr int MAXIT = 128;
 
   double xl = std::min(x1, x2);
@@ -62,10 +63,13 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
   double fl = func(xl);
   double fh = func(xh);
 
-  if (fl == 0.0) return xl;
-  if (fh == 0.0) return xh;
+  if (fl == 0.0)
+    return xl;
+  if (fh == 0.0)
+    return xh;
 
-  if (std::signbit(fl) == std::signbit(fh)) throw std::runtime_error("Root must be bracketed");
+  if (std::signbit(fl) == std::signbit(fh))
+    throw std::runtime_error("Root must be bracketed");
 
   // fx 非零；保持两端函数值异号。
   auto update_bracket = [&](double x, double fx) {
@@ -82,10 +86,12 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
     const double xm = std::midpoint(xl, xh);
 
     // 区间足够小，或已无可表示的内部浮点数。
-    if (xm == xl || xm == xh || std::max(xm - xl, xh - xm) <= xacc) return xm;
+    if (xm == xl || xm == xh || std::max(xm - xl, xh - xm) <= xacc)
+      return xm;
 
     const double fm = func(xm);
-    if (fm == 0.0) return xm;
+    if (fm == 0.0)
+      return xm;
 
     const double scale = std::max({std::abs(fl), std::abs(fh), std::abs(fm)});
 
@@ -95,7 +101,8 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
 
     // fl、fh 异号，所以 sqrt(c*c - a*b)
     // 等于 hypot(c, sqrt(|a|)*sqrt(|b|))。
-    const double s = std::hypot(c, std::sqrt(std::abs(a)) * std::sqrt(std::abs(b)));
+    const double s =
+        std::hypot(c, std::sqrt(std::abs(a)) * std::sqrt(std::abs(b)));
 
     double xn = xm;
     if (s > 0.0) {
@@ -108,7 +115,8 @@ template <class F> double zriddr(F const &func, double x1, double x2, double xac
     // 候选点严格位于剩余括根区间内才使用。
     if (xl < xn && xn < xh) {
       const double fn = func(xn);
-      if (fn == 0.0) return xn;
+      if (fn == 0.0)
+        return xn;
 
       update_bracket(xn, fn);
     }

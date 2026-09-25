@@ -5,7 +5,8 @@
 #include <cmath>
 #include <limits>
 
-inline bool solve_quadratic(double a, double b, double c, std::array<double, 2> &roots) noexcept {
+inline bool solve_quadratic(double a, double b, double c,
+                            std::array<double, 2> &roots) noexcept {
   auto fail = [&]() noexcept {
     roots[0] = std::numeric_limits<double>::quiet_NaN();
     roots[1] = std::numeric_limits<double>::quiet_NaN();

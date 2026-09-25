@@ -15,7 +15,8 @@ struct BField {
   int mu_num;
   std::vector<double> f, fp;
 
-  BField(std::string fname, double B_pole, double R_star) : B_pole(B_pole), R_star(R_star) {
+  BField(std::string fname, double B_pole, double R_star)
+      : B_pole(B_pole), R_star(R_star) {
     std::ifstream fin(fname);
     if (!fin) {
       throw std::runtime_error("Error: cannot open file " + fname);

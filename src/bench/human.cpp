@@ -48,17 +48,21 @@ struct PhotonEvolution {
     double3 b = B_vec / B;
     double x = B_to_omega * B * std::sqrt(1 - rs / r) / omega_inf;
     double rho = std::hypot(r_hat.x, r_hat.y);
-    double3 theta_hat = rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
-                                : double3{std::copysign(1.0, muz), 0, 0};
-    double3 phi_hat = rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
-    double mu = std::clamp(b.x * std::cos(alpha) +
-                               std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat)),
-                           -1.0, 1.0);
+    double3 theta_hat =
+        rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
+                : double3{std::copysign(1.0, muz), 0, 0};
+    double3 phi_hat =
+        rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
+    double mu = std::clamp(
+        b.x * std::cos(alpha) +
+            std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat)),
+        -1.0, 1.0);
     return Geometry{
         .x = x,
         .mu = mu,
         .D = std::fma(x, x, (mu - 1) * (mu + 1)),
-        .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) * fb.inv_abs_b_mean / r,
+        .pref = (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) *
+                fb.inv_abs_b_mean / r,
     };
   }
 };
@@ -68,8 +72,9 @@ double event_escape(double x, YVector const &y) { return y[0] - 10000; }
 
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
-double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 4,
-                           int n_scan = 4, double orbit_atol = 1e-10, double orbit_rtol = 1e-10,
+double total_optical_depth(double b0, double muz, double oi, Polarization pol,
+                           int n_knots = 4, int n_scan = 4,
+                           double orbit_atol = 1e-10, double orbit_rtol = 1e-10,
                            double quad_atol = 1e-8, double quad_rtol = 1e-8) {
   Boltzmann fb(b0, n_knots);
   double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
@@ -106,11 +111,15 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
         double r = xl + (xr - xl) * i / n_scan;
         auto gr = pe.geo(stepper.dense_out(r));
         if (gl.D * gr.D <= 0) {
-          cuts.push_back(zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; }, l, r, 0));
+          cuts.push_back(
+              zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; },
+                     l, r, 0));
         }
         for (double beta : fb.knots) {
           double ginv = std::sqrt((1 - beta) * (1 + beta));
-          auto bound = [beta, ginv](double x, double mu) { return x * ginv + beta * mu - 1; };
+          auto bound = [beta, ginv](double x, double mu) {
+            return x * ginv + beta * mu - 1;
+          };
           if (bound(gl.x, gl.mu) * bound(gr.x, gr.mu) <= 0) {
             cuts.push_back(zriddr(
                 [&](double x) {
@@ -127,19 +136,24 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
       cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
         double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
-        if (pe.geo(stepper.dense_out(m)).D <= 0) continue;
+        if (pe.geo(stepper.dense_out(m)).D <= 0)
+          continue;
         auto integrand = [&](double path_length) {
           auto y = stepper.dense_out(path_length);
           auto g = pe.geo(y);
           std::array<double, 2> betas;
-          if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu, (1 + g.x) * (1 - g.x), betas))
+          if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu,
+                               (1 + g.x) * (1 - g.x), betas))
             return 0.0;
           double ret = 0;
           for (double beta : betas) {
             double f = fb.f(beta);
-            if (f == 0) continue;
-            double overlap = (pol == Polarization::E) ? (0.5) : (0.5 * g.D / (g.x * g.x));
-            ret += f * overlap * (1 - beta * g.mu) * (1 + beta) * (1 - beta) * g.x / std::sqrt(g.D);
+            if (f == 0)
+              continue;
+            double overlap =
+                (pol == Polarization::E) ? (0.5) : (0.5 * g.D / (g.x * g.x));
+            ret += f * overlap * (1 - beta * g.mu) * (1 + beta) * (1 - beta) *
+                   g.x / std::sqrt(g.D);
           }
           return ret * g.pref;
         };
@@ -148,7 +162,8 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
       }
     }
 
-    if (event_id != -1) break;
+    if (event_id != -1)
+      break;
     stepper.update_old();
   }
   return tau;

@@ -36,8 +36,8 @@ struct PhotonEvolution {
     dydx[3] = calc_dtaudl(n, e1, e2, r, psi, alpha, omega_inf, pol);
   }
 
-  double calc_dtaudl(double3 n, double3 e1, double3 e2, double r, double psi, double alpha,
-                     double omega_inf, Polarization pol) const {
+  double calc_dtaudl(double3 n, double3 e1, double3 e2, double r, double psi,
+                     double alpha, double omega_inf, Polarization pol) const {
     double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
     double muz = r_hat.z;
     double3 B_vec = bfield.calc_B(r, muz);
@@ -47,23 +47,29 @@ struct PhotonEvolution {
     double omega = omega_inf / std::sqrt(1 - rs / r);
     double x = omega_c / omega;
     double rho = std::hypot(r_hat.x, r_hat.y);
-    double3 theta_hat = rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
-                                : double3{std::copysign(1.0, muz), 0, 0};
-    double3 phi_hat = rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
+    double3 theta_hat =
+        rho > 0 ? double3{r_hat.x * muz / rho, r_hat.y * muz / rho, -rho}
+                : double3{std::copysign(1.0, muz), 0, 0};
+    double3 phi_hat =
+        rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
     double mu_in =
-        b.x * std::cos(alpha) + std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat));
+        b.x * std::cos(alpha) +
+        std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat));
     std::array<double, 2> betas;
-    if (!solve_quadratic(x * x + mu_in * mu_in, -2 * mu_in, 1 - x * x, betas)) return 0;
+    if (!solve_quadratic(x * x + mu_in * mu_in, -2 * mu_in, 1 - x * x, betas))
+      return 0;
     double ret = 0;
     for (double beta : betas) {
       double f = fb.f(beta);
-      if (f == 0) continue;
+      if (f == 0)
+        continue;
       double mup_in = (mu_in - beta) / (1 - beta * mu_in);
       double esq = (pol == Polarization::E) ? (0.5) : (0.5 * mup_in * mup_in);
-      ret += f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) * (1 - beta * beta) /
-             std::abs(mu_in - beta);
+      ret += f * esq * (1 - beta * mu_in) * (1 - beta * mu_in) *
+             (1 - beta * beta) / std::abs(mu_in - beta);
     }
-    ret *= (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) / (std::abs(fb.b_bar()) * r);
+    ret *= (bfield.p + 1) * pi * bfield.Bphi_over_Btheta(muz) /
+           (std::abs(fb.b_bar()) * r);
 
     if (!std::isfinite(ret)) {
       throw std::runtime_error("Non-finite dtaudl encountered");
@@ -104,7 +110,8 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol) {
   while (true) {
     stepper.do_step();
     int event_id = stepper.detect_event();
-    if (event_id == 0) break;
+    if (event_id == 0)
+      break;
     stepper.update_old();
   }
   double tau = stepper.y_new[3];

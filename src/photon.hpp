@@ -9,4 +9,3 @@ enum class Polarization { O, E };
 //   double r, psi, alpha, omega_inf;
 //   Polarization pol;
 // };
-
