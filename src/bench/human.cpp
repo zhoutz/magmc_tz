@@ -69,7 +69,7 @@ double event_escape(double x, YVector const &y) { return y[0] - 10000; }
 BField bfield("table/bfield_t10.txt", B_pole, R_star);
 
 double total_optical_depth(double b0, double muz, double oi, Polarization pol, int n_knots = 10,
-                           int n_scan = 8, double rtol = 1e-10) {
+                           int n_scan = 8, double atol = 1e-10, double rtol = 1e-10) {
   Boltzmann fb(b0, n_knots);
   double3 r_hat{std::sqrt(1 - muz * muz), 0, muz};
   double3 n{0, 1, 0};
@@ -84,7 +84,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
       .pol = pol,
   };
 
-  StepperDopr5<3, PhotonEvolution> stepper(pe, 0, rtol);
+  StepperDopr5<3, PhotonEvolution> stepper(pe, atol, rtol);
   stepper.add_event(&event_absorb);
   stepper.add_event(&event_escape);
 
@@ -103,33 +103,27 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
       for (int i = 1; i <= n_scan; ++i) {
         double r = xl + (xr - xl) * i / n_scan;
         auto gr = pe.geo(stepper.dense_out(r));
-        if (gl.D * gr.D < 0) {
-          cuts.push_back(
-              zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; }, l, r, rtol * r));
+        if (gl.D * gr.D <= 0) {
+          cuts.push_back(zriddr([&](double x) { return pe.geo(stepper.dense_out(x)).D; }, l, r, 0));
         }
         for (double beta : fb.knots) {
           auto bound = [beta](double x, double mu) {
             return x * std::sqrt((1 - beta) * (1 + beta)) + beta * mu - 1;
           };
-          if (bound(gl.x, gl.mu) * bound(gr.x, gr.mu) < 0) {
+          if (bound(gl.x, gl.mu) * bound(gr.x, gr.mu) <= 0) {
             cuts.push_back(zriddr(
                 [&](double x) {
                   auto g = pe.geo(stepper.dense_out(x));
                   return bound(g.x, g.mu);
                 },
-                l, r, rtol * r));
+                l, r, 0));
           }
         }
         l = r;
         gl = gr;
       }
       std::sort(cuts.begin(), cuts.end());
-      cuts.erase(std::unique(cuts.begin(), cuts.end(),
-                             [rtol](double a, double b) {
-                               return std::abs(a - b) <=
-                                      2 * rtol * std::max(std::abs(a), std::abs(b));
-                             }),
-                 cuts.end());
+      cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (int i = 0; i < cuts.size() - 1; ++i) {
         double l = cuts[i], r = cuts[i + 1], m = std::midpoint(l, r);
         auto gm = pe.geo(stepper.dense_out(m));
@@ -149,7 +143,7 @@ double total_optical_depth(double b0, double muz, double oi, Polarization pol, i
           }
           return ret * g.pref;
         };
-        tau += qags(integrand, l, r, 0, rtol);
+        tau += qags(integrand, l, r, atol, rtol);
       }
     }
 
