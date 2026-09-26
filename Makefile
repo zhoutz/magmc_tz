@@ -17,6 +17,10 @@ human:
 main:
 	g++-16 src/dev/main.cpp -o build/main -std=c++23 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib -O3
 	time build/main
+	
+ft07:
+	g++-16 src/dev/ft07.cpp -o build/ft07 -std=c++23 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib -O3
+	time build/ft07 --photons 1000000
 
 build:
 	mkdir build

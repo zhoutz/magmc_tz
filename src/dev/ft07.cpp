@@ -377,7 +377,7 @@ int main(int argc, char **argv) {
   try {
     long long N = 100000;
     int seed = 7774;
-    std::string output = "output/ft07_beta075_twist10.txt";
+    std::string output = "output/ft07_beta075_twist10_E.txt";
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
       if (arg == "--help") {
