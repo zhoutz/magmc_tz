@@ -21,3 +21,12 @@ test_qagp:
 
 build:
 	mkdir build
+
+.PHONY: global_sqrt velocity_panels transport_fast benchmark_optical_depth
+global_sqrt velocity_panels transport_fast:
+	mkdir -p build output
+	g++-16 src/bench/$@.cpp -o build/$@ -std=c++23 -O3 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib
+	build/$@
+
+benchmark_optical_depth:
+	python3 py/compare_all_optical_depth.py

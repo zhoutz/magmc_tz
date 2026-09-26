@@ -254,10 +254,10 @@ def analyze():
     print(json.dumps(result, indent=2))
 
 
-def refine():
+def refine(methods=None):
     coarse=rows(OUT/'random_truth_coarse.dat'); fine=rows(OUT/'random_truth_fine.dat')
     ids=set(sorted(range(1000),key=lambda i:abs(coarse[i][1]-fine[i][1]),reverse=True)[:12])
-    for method in ['human','test_qagp','ref','ref_matched']:
+    for method in methods or ['human','test_qagp','ref','ref_matched']:
         actual=rows(OUT/f'random_{method}_1.dat')
         good=[i for i in range(1000) if not actual[i][3]]
         ids.update(i for i in range(1000) if actual[i][3])
