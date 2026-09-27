@@ -164,9 +164,6 @@ struct PhotonEvolution {
   double pol_start = std::numeric_limits<double>::infinity();
   double frozen_at = std::numeric_limits<double>::infinity();
   double pol_h = 0;
-  bool radial_geometry = false;
-  double radial_r0 = 1, radial_lapse0 = 1;
-  fd11::Coeff radial_coeff{0, 1, 0};
   std::array<double3, 8> pol_polynomial;
   double poly_x = 0, poly_h = 1;
   bool use_polynomial = false;
@@ -203,13 +200,6 @@ struct PhotonEvolution {
     pol_h = 0;
     pol_segments.clear();
     stepper.init(0.0, 1e-3 * R_star, {r0, psi0, alpha0});
-    radial_geometry = false;
-    if (pol_options.enabled && alpha0 == 0) {
-      radial_coeff = pol_coeff(stepper.y_old);
-      radial_r0 = r0;
-      radial_lapse0 = std::sqrt(1 - rs / r0);
-      radial_geometry = true;
-    }
   }
 
   struct Screen {
@@ -231,11 +221,6 @@ struct PhotonEvolution {
     return {rh, kh, xh, n, bf.x * rh + bf.y * th + bf.z * az};
   }
   fd11::Coeff pol_coeff(YVector const &state) const {
-    if (radial_geometry) {
-      double scale = std::pow(radial_r0 / state[0], 2 * (2 + bfield.p)) *
-                     radial_lapse0 / std::sqrt(1 - rs / state[0]);
-      return {radial_coeff.kappa * scale, radial_coeff.c, radial_coeff.s};
-    }
     auto f = screen(state);
     double bx = dot(f.B, f.x), by = dot(f.B, f.y), bt2 = bx * bx + by * by;
     double kappa = fd11::birefringence * omega_inf /
@@ -360,26 +345,6 @@ struct PhotonEvolution {
       pol_stage = PolStage::Integrating;
       ++stats.starts;
       pol_h = xr - x;
-    }
-    if (radial_geometry && xr > x) {
-      // Exact Stokes solution for radial rays in this self-similar field:
-      // B's transverse direction is constant, so an eigenmode stays pure.
-      // Retain the dynamical phase in FD11's freezing test; do not declare a
-      // constant Stokes vector frozen just because its derivative vanishes.
-      constexpr double g = 0.28867513459481288225;
-      double h = xr - x, integral = 0;
-      for (double t : {0.25 - g / 2, 0.25 + g / 2, 0.75 - g / 2, 0.75 + g / 2})
-        integral += pol_coeff(x + t * h).kappa * h / 4;
-      double eigenvalue = pol == Polarization::O ? 7.0 / 3 : 4.0 / 3;
-      double r = stepper.dense_out(xr)[0];
-      double change = 2 * std::abs(std::sin(eigenvalue * integral / 2)) * r / h;
-      ++stats.accepted;
-      if (change < pol_options.freeze && pol_coeff(xr).kappa * r < 1) {
-        pol_stage = PolStage::Frozen;
-        frozen_at = xr;
-        ++stats.freezes;
-      }
-      return;
     }
     prepare_polynomial(x, xr);
     while (x < xr) {
