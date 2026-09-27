@@ -24,3 +24,12 @@ ft07:
 
 build:
 	mkdir build
+
+.PHONY: fd11 fd11-test
+fd11:
+	mkdir -p build output
+	g++-16 src/dev/fd11.cpp -o build/fd11 -std=c++23 -O3 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib
+
+fd11-test: fd11
+	g++-16 src/dev/fd11_test.cpp -o build/fd11_test -std=c++23 -O3 -lgsl -I/opt/homebrew/include -L/opt/homebrew/lib
+	build/fd11_test
