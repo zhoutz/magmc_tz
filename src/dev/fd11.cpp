@@ -169,9 +169,8 @@ struct PhotonEvolution {
         return -1.0;
       // Use exactly the same endpoint state in the sign test and root search.
       // Dense output can differ by an ulp, amplified by the angle derivative.
-      auto const &sample = path == stepper.x_old + stepper.h_old
-                               ? stepper.y_new
-                               : state;
+      auto const &sample =
+          path == stepper.x_old + stepper.h_old ? stepper.y_new : state;
       return coupling_event(sample);
     });
   }
@@ -242,7 +241,8 @@ struct PhotonEvolution {
     return angle / (4 * dl);
   }
   double adiabatic_event(YVector const &state) const {
-    return std::abs(chi_prime(state)) - pol_options.couple * pol_coeff(state).kappa;
+    return std::abs(chi_prime(state)) -
+           pol_options.couple * pol_coeff(state).kappa;
   }
   double coupling_event(YVector const &state) const {
     if (pol_options.coupling_criterion == fd11::CouplingCriterion::FD11)
@@ -386,7 +386,7 @@ struct PhotonEvolution {
     auto [r, psi, alpha] = y;
     double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
     double muz = std::clamp(r_hat.z, -1.0, 1.0);
-    double3 B_vec = bfield.calc_B(r, muz);
+    auto [B_vec, twist] = bfield.B_and_twist(r, muz);
     double B = B_vec.length();
     double3 b = B_vec / B;
     double x = B_to_omega * B * std::sqrt(1 - rs / r) / omega_inf;
@@ -401,7 +401,6 @@ struct PhotonEvolution {
             std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat)),
         -1.0, 1.0);
     double D = std::fma(x, x, (mu - 1) * (mu + 1));
-    double twist = bfield.Bphi_over_Btheta(muz);
     double basepref = (bfield.p + 1) * pi * twist * fb.inv_abs_b_mean * x * x /
                       (r * std::sqrt(D));
     if (!std::isfinite(basepref) || basepref < 0)
@@ -581,8 +580,16 @@ struct PhotonEvolution {
       cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
       for (size_t i = 0; i + 1 < cuts.size(); ++i) {
         double l = cuts[i], r = cuts[i + 1];
-        if (geo(stepper.dense_out(std::midpoint(l, r))).D <= 0)
+        auto gm = geo(stepper.dense_out(std::midpoint(l, r)));
+        if (gm.D <= 0)
           continue;
+        std::array<double, 2> betas;
+        if (!solve_quadratic(gm.x * gm.x + gm.mu * gm.mu, -2 * gm.mu,
+                             (1 + gm.x) * (1 - gm.x), betas))
+          continue;
+        if (fb.f(betas[0]) == 0 && fb.f(betas[1]) == 0)
+          continue;
+
         auto integrand = [&](double path_length) {
           auto g = geo(stepper.dense_out(path_length));
           std::array<double, 2> betas;
@@ -745,9 +752,9 @@ int main(int argc, char **argv) try {
       if (criterion != "fd11" && criterion != "adiabatic")
         throw std::invalid_argument("--coupling-criterion: fd11 or adiabatic");
       options.coupling_criterion = criterion == "fd11"
-          ? fd11::CouplingCriterion::FD11 : fd11::CouplingCriterion::Adiabatic;
-    }
-    else if (arg == "--freeze")
+                                       ? fd11::CouplingCriterion::FD11
+                                       : fd11::CouplingCriterion::Adiabatic;
+    } else if (arg == "--freeze")
       options.freeze = std::stod(value());
     else if (arg == "--no-polarization")
       options.enabled = false;
@@ -768,7 +775,8 @@ int main(int argc, char **argv) try {
           "  --mode E|O (E) --output output/fd11.txt\n"
           "  --pol-tol 1e-5 --couple 1e-3 --freeze 1e-3 (0 disables freezing)\n"
           "  --coupling-criterion fd11|adiabatic (adiabatic)\n"
-          "  --couple sets the threshold l_A/r (fd11) or |d chi_B/dl|/kappa (adiabatic)\n"
+          "  --couple sets the threshold l_A/r (fd11) or |d chi_B/dl|/kappa "
+          "(adiabatic)\n"
           "  --charge electron|positron (electron) --no-polarization\n"
           "Output: omega_inf_keV mu_k Q U V; I=1.\n"
           "Screen x=projected magnetic axis, y=k cross x; V=+2 Im(Ax Ay*).");
