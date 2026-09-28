@@ -224,25 +224,21 @@ struct PhotonEvolution {
     // Positive on the integrating side, finite even when kappa is zero.
     return 1 - pol_options.couple * pol_coeff(state).kappa * state[0];
   }
-  int step_geodesic() {
-    // A photon can be emitted/scattered already beyond the FD11 coupling threshold.
-    // Deliver a zero-length event at its initial point through the same
-    // event-handling path as an ordinary crossing.
-    bool start_here = pol_options.enabled && pol_stage == PolStage::Mode &&
-                      stepper.events[PolarizationEvent].sign >= 0;
-    stepper.do_step(0.1 * stepper.y_old[0]);
-    if (!start_here)
-      return stepper.detect_event();
-    stepper.y_new = stepper.y_old;
-    stepper.dydx_new = stepper.dydx_old;
-    stepper.h_old = 0;
-    return PolarizationEvent;
+  // Call immediately after emission/scattering initialization, before stepping.
+  void set_pol_state() {
+    if (pol_options.enabled && pol_stage == PolStage::Mode &&
+        stepper.events[PolarizationEvent].sign >= 0)
+      start_polarization(stepper.x_old, stepper.y_old, stepper.h_old);
   }
-  void start_polarization() {
-    pol_start = stepper.x_old + stepper.h_old;
-    stokes = eigenmode(pol_coeff(stepper.y_new));
+  int step_geodesic() {
+    stepper.do_step(0.1 * stepper.y_old[0]);
+    return stepper.detect_event();
+  }
+  void start_polarization(double path, YVector const &state, double initial_h) {
+    pol_start = path;
+    stokes = eigenmode(pol_coeff(state));
     pol_stage = PolStage::Integrating;
-    pol_h = stepper.h_new;
+    pol_h = initial_h;
     ++stats.starts;
     // The event callback now returns -1. Reset its cached sign as well,
     // so disabling it cannot create a spurious crossing on the next step.
@@ -646,7 +642,8 @@ struct PhotonEvolution {
         escaped_data.V = stokes.z;
         return EvolveResult::Escaped;
       } else if (event_id == PolarizationEvent) {
-        start_polarization();
+        start_polarization(stepper.x_old + stepper.h_old, stepper.y_new,
+                           stepper.h_new);
       }
       stepper.update_old();
     }
@@ -766,6 +763,7 @@ int main(int argc, char **argv) try {
   auto start_time = std::chrono::steady_clock::now();
   for (int i = 0; i < N; ++i) {
     pe.init_random_radial(energy, initial_mode);
+    pe.set_pol_state();
     while (true) {
       auto result = pe.evolve_geodesic();
       if (result == PhotonEvolution::EvolveResult::Escaped) {
@@ -778,6 +776,7 @@ int main(int argc, char **argv) try {
         break;
       } else if (result == PhotonEvolution::EvolveResult::Scattered) {
         pe.perform_scattering();
+        pe.set_pol_state();
         ++scattered;
       }
     }

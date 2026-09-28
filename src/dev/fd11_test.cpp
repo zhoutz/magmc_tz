@@ -195,6 +195,7 @@ void oscillatory_opacity_test(bool support_boundary) {
 void lifecycle_tests() {
   PhotonEvolution pe(bfield, fb, 91);
   pe.init({0, 0, 1}, {1, 0, 0}, {0, 1, 0}, 1, Polarization::E, R_star, 0, 0);
+  pe.set_init_pol_state();
   pe.stepper.do_step();
   pe.advance_polarization(0, pe.stepper.h_old);
   require(pe.pol_stage == PhotonEvolution::PolStage::Mode && pe.stats.accepted == 0,
@@ -208,8 +209,13 @@ void lifecycle_tests() {
   require(pe.stepper.events[PhotonEvolution::PolarizationEvent].sign ==
               pe.stepper.sign(pe.coupling_event(pe.stepper.y_old)),
           "Scattering must rearm the selected coupling event");
+  bool start_after_scattering = pe.coupling_event(pe.stepper.y_old) >= 0;
+  pe.set_init_pol_state();
+  require((pe.pol_stage == PhotonEvolution::PolStage::Integrating) ==
+              start_after_scattering, "Set polarization state after scattering");
   // Exactly parallel field: deterministic degenerate mode and no NaNs.
   pe.init({0, 1, 0}, {0, 0, 1}, {1, 0, 0}, 1, Polarization::E, 100, 0, 0);
+  pe.set_init_pol_state();
   require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped,
           "Parallel-field ray should escape");
   require(std::isfinite(pe.stokes.x) && std::abs(pe.stokes.length() - 1) < 1e-12,
@@ -239,6 +245,9 @@ void coupling_criterion_tests() {
   init(180);
   require(pe.coupling_event(pe.stepper.y_old) < 0,
           "Delayed-start fixture must be below the FD11 threshold");
+  pe.set_init_pol_state();
+  require(pe.pol_stage == PhotonEvolution::PolStage::Mode &&
+              !std::isfinite(pe.pol_start), "Subthreshold initial state stays Mode");
   int event = -1;
   for (int i = 0; i < 1000; ++i) {
     event = pe.step_geodesic();
@@ -257,11 +266,24 @@ void coupling_criterion_tests() {
           "Start event must be disarmed");
   init(5000);
   auto starts = pe.stats.starts;
+  auto initial_state = pe.stepper.y_old;
+  double initial_h = pe.stepper.h_old;
+  pe.set_init_pol_state();
+  require(pe.pol_stage == PhotonEvolution::PolStage::Integrating &&
+              pe.pol_start == 0 && pe.pol_h == initial_h &&
+              pe.stepper.y_old == initial_state && pe.stepper.x_old == 0 &&
+              pe.stepper.h_old == initial_h &&
+              pe.stepper.events[PhotonEvolution::PolarizationEvent].sign == -1 &&
+              (pe.stokes + (-1.0)*pe.eigenmode(pe.pol_coeff(initial_state))).length() < 1e-14,
+          "Initial polarization must be set without stepping or dense output");
+  pe.set_init_pol_state();
+  require(pe.stats.starts == starts + 1, "Repeated initialization must not restart polarization");
   require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped &&
               pe.pol_start == 0 && pe.stats.starts == starts + 1,
           "The FD11 criterion must consume an initially satisfied event once");
   pe.pol_options.enabled = false;
   init(5000);
+  pe.set_init_pol_state();
   require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped &&
               !std::isfinite(pe.pol_start) && pe.stats.starts == starts + 1,
           "Disabled polarization must ignore the coupling criterion");
@@ -282,6 +304,7 @@ RayResult ray(double alpha, Polarization mode, double tol, double couple,
   pe.init(normal, rh, cross(normal, rh), 1, mode, 18 * R_star, 0, alpha);
   require(pe.pol_stage == PhotonEvolution::PolStage::Mode && pe.stokes.length() == 0,
           "Emission must store only O/E");
+  pe.set_init_pol_state();
   Jones j{};
   bool started = false;
   double start_r = 0, freeze_r = 0, max_error = 0;
