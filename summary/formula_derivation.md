@@ -846,14 +846,16 @@ v_xv_y'-v_yv_x'
 \boxed{\Theta'={v_xv_y'-v_yv_x'\over v_x^2+v_y^2}.}
 \]
 
-代码在可用的多项式插值上直接求此导数；否则使用局部角差的有限差分。两个位置的角差通过
+当前代码已移除系数多项式插值，统一使用局部角差的有限差分计算此导数。两个位置的角差通过
 
 \[
 \Delta\Theta=\operatorname{atan2}
 (c_as_b-s_ac_b,\;c_ac_b+s_as_b)
 \]
 
-求得，其中 $c_a=\cos\Theta(a),s_a=\sin\Theta(a)$。这样不会直接对有分支跳跃的 `atan2` 输出做减法。
+求得，其中 $c_a=\cos\Theta(a),s_a=\sin\Theta(a)$，这些系数均由 `pol_coeff` 直接计算。
+然后用 $\Theta'\approx\Delta\Theta/(b-a)$；差分半宽为 `1e-4*stepper.h_old`，
+端点裁剪到当前轨道稠密输出的定义域。这样不会直接对有分支跳跃的 `atan2` 输出做减法。
 
 <a id="section-8"></a>
 
@@ -2147,6 +2149,11 @@ S=\pm(\cos\Theta,\sin\Theta,0)
 <a id="section-16"></a>
 
 ## 16. 系数插值、求导与稠密偏振查询
+
+**实现更新：** `fd11.cpp` 已按要求删除系数多项式插值。以下涉及八节点多项式、差商、
+Horner 求值和插值误差检查的内容仅保留为历史推导，不再描述当前代码。
+当前系数统一由 `pol_coeff` 直接计算，方向导数使用第 7 节的局部角差有限差分；
+稠密偏振查询仍保留。删除范围与验证结果见 [fd11_remove_polynomial.md](fd11_remove_polynomial.md)。
 
 ### 16.1 为什么插值 $\Omega_Q,\Omega_U$，而不直接插值角度
 

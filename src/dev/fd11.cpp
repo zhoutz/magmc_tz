@@ -140,9 +140,6 @@ struct PhotonEvolution {
   double pol_start = std::numeric_limits<double>::infinity();
   double frozen_at = std::numeric_limits<double>::infinity();
   double pol_h = 0;
-  std::array<double3, 8> pol_polynomial;
-  double poly_x = 0, poly_h = 1;
-  bool use_polynomial = false;
   struct PolSegment {
     double x, end;
     fd11::Stokes before;
@@ -211,44 +208,6 @@ struct PhotonEvolution {
   fd11::Coeff pol_coeff(double path) const {
     return pol_coeff(stepper.dense_out(path));
   }
-  fd11::Coeff interpolated_coeff(double path) const {
-    if (!use_polynomial)
-      return pol_coeff(path);
-    double t = 7 * (path - poly_x) / poly_h;
-    auto v = pol_polynomial.back();
-    for (int i = 6; i >= 0; --i)
-      v = pol_polynomial[i] + (t - i) * v;
-    double kappa = std::hypot(v.x, v.y);
-    return kappa > 0 ? fd11::Coeff{kappa, v.x / kappa, v.y / kappa}
-                     : fd11::Coeff{0, 1, 0};
-  }
-  void prepare_polynomial(double left, double right) {
-    use_polynomial = false;
-    if (!(right > left))
-      return;
-    poly_x = left;
-    poly_h = right - left;
-    for (int i = 0; i < 8; ++i)
-      pol_polynomial[i] = pol_coeff(left + poly_h * i / 7).omega();
-    for (int order = 1; order < 8; ++order)
-      for (int i = 7; i >= order; --i)
-        pol_polynomial[i] =
-            (pol_polynomial[i] + (-1.0) * pol_polynomial[i - 1]) / order;
-    use_polynomial = true;
-    // Field-table knots can spoil smoothness: validate the interpolant and
-    // fall back to direct geometry evaluation when its accuracy is uncertain.
-    for (double f : {0.17, 0.53, 0.87}) {
-      double path = left + f * poly_h;
-      auto exact = pol_coeff(path), approx = interpolated_coeff(path);
-      double error = (exact.omega() + (-1.0) * approx.omega()).length();
-      if (error > std::min(1e-7, 0.01 * pol_options.tolerance) *
-                      std::max(exact.kappa, 1e-30) ||
-          error * poly_h > 0.01 * pol_options.tolerance) {
-        use_polynomial = false;
-        break;
-      }
-    }
-  }
   fd11::Stokes eigenmode(fd11::Coeff c) const {
     double sign = pol == Polarization::O ? 1 : -1;
     return {sign * c.c, sign * c.s, 0};
@@ -256,7 +215,7 @@ struct PhotonEvolution {
   fd11::Propagator pol_step(double x, double h) const {
     if (h == 0)
       return {};
-    auto begin = interpolated_coeff(x), end = interpolated_coeff(x + h);
+    auto begin = pol_coeff(x), end = pol_coeff(x + h);
     double angle = std::atan2(begin.c * end.s - begin.s * end.c,
                               begin.c * end.c + begin.s * end.s);
     // In the field-aligned screen the rapid rotation axis is nearly constant:
@@ -265,32 +224,18 @@ struct PhotonEvolution {
     // screen. Large axis turns (near a transverse-field null) use the regular
     // screen.
     if (std::abs(angle) > 0.2)
-      return fd11::magnus([&](double s) { return interpolated_coeff(s); }, x,
-                          h);
+      return fd11::magnus([&](double s) { return pol_coeff(s); }, x, h);
     auto generator = [&](double path) {
-      auto c = interpolated_coeff(path);
+      auto c = pol_coeff(path);
       if (c.kappa == 0)
         return fd11::Coeff{0, 1, 0};
-      double theta_prime;
-      if (use_polynomial) {
-        double t = 7 * (path - poly_x) / poly_h;
-        auto v = pol_polynomial.back();
-        double3 derivative{0, 0, 0};
-        for (int i = 6; i >= 0; --i) {
-          derivative = v + (t - i) * derivative;
-          v = pol_polynomial[i] + (t - i) * v;
-        }
-        theta_prime = 7 / poly_h * (v.x * derivative.y - v.y * derivative.x) /
-                      (v.x * v.x + v.y * v.y);
-      } else {
-        double dx = 1e-4 * stepper.h_old;
-        double a = std::max(stepper.x_old, path - dx);
-        double b = std::min(stepper.x_old + stepper.h_old, path + dx);
-        auto ca = pol_coeff(a), cb = pol_coeff(b);
-        theta_prime =
-            std::atan2(ca.c * cb.s - ca.s * cb.c, ca.c * cb.c + ca.s * cb.s) /
-            (b - a);
-      }
+      double dx = 1e-4 * stepper.h_old;
+      double a = std::max(stepper.x_old, path - dx);
+      double b = std::min(stepper.x_old + stepper.h_old, path + dx);
+      auto ca = pol_coeff(a), cb = pol_coeff(b);
+      double theta_prime =
+          std::atan2(ca.c * cb.s - ca.s * cb.c, ca.c * cb.c + ca.s * cb.s) /
+          (b - a);
       return fd11::Coeff{c.kappa, 1, 0, -theta_prime};
     };
     auto p = fd11::magnus(generator, x, h);
@@ -318,7 +263,6 @@ struct PhotonEvolution {
   }
   void advance_polarization(double xl, double xr) {
     pol_segments.clear();
-    use_polynomial = false;
     if (!pol_options.enabled || pol_stage == PolStage::Frozen)
       return;
     double x = xl;
@@ -348,7 +292,6 @@ struct PhotonEvolution {
       ++stats.starts;
       pol_h = xr - x;
     }
-    prepare_polynomial(x, xr);
     while (x < xr) {
       double h = std::min(pol_h > 0 ? pol_h : xr - x, xr - x);
       if (x + h == x)
@@ -378,7 +321,7 @@ struct PhotonEvolution {
       // FD11 (35), including its common phase. The weak-phase guard avoids
       // false freezing when a large phase happens to wrap through 2 pi.
       if (change < pol_options.freeze &&
-          interpolated_coeff(x).kappa * end[0] < 1 && std::cos(end[2]) > 0) {
+          pol_coeff(x).kappa * end[0] < 1 && std::cos(end[2]) > 0) {
         pol_stage = PolStage::Frozen;
         frozen_at = x;
         ++stats.freezes;
@@ -495,7 +438,7 @@ struct PhotonEvolution {
                                 16 * std::numeric_limits<double>::epsilon() *
                                     std::max(1.0, right));
     auto boundary = [&](double x, double interior) {
-      auto c = interpolated_coeff(x);
+      auto c = pol_coeff(x);
       auto s = polarization_at(x);
       double ub = -c.s * s.x + c.c * s.y;
       // The Boltzmann distribution has a finite jump at beta=0. Quadrature
@@ -504,7 +447,7 @@ struct PhotonEvolution {
       return opacity_terms(interior).z * ub / c.kappa;
     };
     auto integrand = [&](double x) {
-      auto c = interpolated_coeff(x);
+      auto c = pol_coeff(x);
       auto s = polarization_at(x);
       double qb = c.c * s.x + c.s * s.y, ub = -c.s * s.x + c.c * s.y;
       auto terms = opacity_terms(x);
@@ -513,7 +456,7 @@ struct PhotonEvolution {
       double dx = std::max(1e-7, 1e-4 * (right - left));
       double a = std::max(left + inset, x - dx);
       double b = std::min(right - inset, x + dx);
-      auto ca = interpolated_coeff(a), cb = interpolated_coeff(b);
+      auto ca = pol_coeff(a), cb = pol_coeff(b);
       double ratio_prime =
           (opacity_terms(b).z / cb.kappa - opacity_terms(a).z / ca.kappa) /
           (b - a);
@@ -530,7 +473,7 @@ struct PhotonEvolution {
       throw std::runtime_error(
           std::format("Negative oscillatory optical depth: value={} "
                       "interval=[{},{}] kappa={} terms={}",
-                      result, left, right, interpolated_coeff(left).kappa,
+                      result, left, right, pol_coeff(left).kappa,
                       opacity_terms(left).x));
     return std::max(0.0, result);
   }
@@ -616,13 +559,11 @@ struct PhotonEvolution {
         };
         bool fast =
             pol_options.enabled && l >= pol_start && r <= frozen_at &&
-            interpolated_coeff(std::midpoint(l, r)).kappa * (r - l) > 256 &&
+            pol_coeff(std::midpoint(l, r)).kappa * (r - l) > 256 &&
             geo(stepper.dense_out(l)).D > 1e-8 &&
             geo(stepper.dense_out(r)).D > 1e-8;
         auto optical_depth = [&](double a, double b) {
-          return fast && interpolated_coeff(std::midpoint(a, b)).kappa *
-                                 (b - a) >
-                             256
+          return fast && pol_coeff(std::midpoint(a, b)).kappa * (b - a) > 256
                      ? fast_optical_depth(a, b)
                      : quad.qags(integrand, a, b, quad_atol, quad_rtol);
         };
