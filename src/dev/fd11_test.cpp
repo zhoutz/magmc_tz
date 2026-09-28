@@ -150,7 +150,7 @@ void polarized_rate_tests() {
     auto terms = pe.opacity_terms(0);
     double expanded = terms.x + terms.y*(c.c*pe.stokes.x+c.s*pe.stokes.y)
                       + terms.z*pe.stokes.z;
-    double direct = g.basepref*(rates[0]+rates[1]);
+    double direct = g.pref*(rates[0]+rates[1]);
     require(std::abs(expanded-direct) < 1e-13*std::max(1.0, direct),
             "IBP coefficients and direct opacity must agree");
   }

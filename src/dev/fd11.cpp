@@ -113,9 +113,11 @@ struct PhotonEvolution {
   static double event_absorb(double, YVector const &y) { return y[0] - R_star; }
   static double event_escape(double, YVector const &y) { return y[0] - 10000; }
   static auto compute_knots(Boltzmann const &fb, int n_knots) {
-    std::vector<double> knots(n_knots);
+    std::vector<std::array<double, 2>> knots(n_knots);
     for (int i = 0; i < n_knots; ++i) {
-      knots[i] = fb.b_min + (fb.b_max - fb.b_min) * i / (n_knots - 1);
+      double beta = fb.b_min + (fb.b_max - fb.b_min) * i / (n_knots - 1);
+      knots[i][0] = beta;
+      knots[i][1] = std::sqrt((1 - beta) * (1 + beta)); // gamma^-1
     }
     return knots;
   }
@@ -125,7 +127,7 @@ struct PhotonEvolution {
   StepperDopr5<3, decltype(geodesic)> stepper;
   Ran ran;
 
-  std::vector<double> knots;
+  std::vector<std::array<double, 2>> knots;
   const int n_scan;
   const double orbit_atol, orbit_rtol, quad_atol, quad_rtol;
 
@@ -146,10 +148,6 @@ struct PhotonEvolution {
     fd11::Stokes before;
   };
   std::vector<PolSegment> pol_segments;
-  struct Stats {
-    long starts = 0, freezes = 0, accepted = 0, rejected = 0;
-    long coupled_scatterings = 0, escaped_mode = 0, escaped_active = 0;
-  } stats;
 
   PhotonEvolution(BField const &bfield, Boltzmann const &fb, int seed, //
                   int n_knots = 4, int n_scan = 4,                     //
@@ -161,10 +159,10 @@ struct PhotonEvolution {
         quad_rtol(quad_rtol) {
     stepper.add_event(&event_absorb);
     stepper.add_event(&event_escape);
-    stepper.add_event([this](double path, YVector const &state) {
+    stepper.add_event([this](double, YVector const &state) {
       if (pol_stage != PolStage::Mode)
         return -1.0;
-      return coupling_event(state);
+      return 1 - pol_options.couple * pol_coeff(state).kappa * state[0];
     });
   }
 
@@ -214,11 +212,7 @@ struct PhotonEvolution {
   fd11::Coeff pol_coeff(double path) const {
     return pol_coeff(stepper.dense_out(path));
   }
-  double coupling_event(YVector const &state) const {
-    // FD11 (25), (34): l_A/r = 1/(kappa*r) > couple.
-    // Positive on the integrating side, finite even when kappa is zero.
-    return 1 - pol_options.couple * pol_coeff(state).kappa * state[0];
-  }
+
   // Call immediately after emission/scattering initialization, before stepping.
   void set_pol_state() {
     if (pol_stage == PolStage::Mode &&
@@ -234,7 +228,6 @@ struct PhotonEvolution {
     stokes = eigenmode(pol_coeff(state));
     pol_stage = PolStage::Integrating;
     pol_h = initial_h;
-    ++stats.starts;
     // The event callback now returns -1. Reset its cached sign as well,
     // so disabling it cannot create a spurious crossing on the next step.
     stepper.events[PolarizationEvent].sign = -1;
@@ -313,10 +306,8 @@ struct PhotonEvolution {
                            0.2, 3.0);
       pol_h = h * factor;
       if (error > pol_options.tolerance) {
-        ++stats.rejected;
         continue;
       }
-      ++stats.accepted;
       pol_segments.push_back({x, x + h / 2, stokes});
       pol_segments.push_back({x + h / 2, x + h, first.apply(stokes)});
       auto end = stepper.dense_out(x + h);
@@ -329,7 +320,6 @@ struct PhotonEvolution {
           std::cos(end[2]) > 0) {
         pol_stage = PolStage::Frozen;
         frozen_at = x;
-        ++stats.freezes;
         return;
       }
     }
@@ -343,7 +333,7 @@ struct PhotonEvolution {
   }
 
   struct Geometry {
-    double x, mu, D, basepref;
+    double x, mu, D, pref;
   };
 
   Geometry geo(YVector const &y) const {
@@ -365,19 +355,18 @@ struct PhotonEvolution {
             std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat)),
         -1.0, 1.0);
     double D = std::fma(x, x, (mu - 1) * (mu + 1));
-    double basepref = (bfield.p + 1) * pi * twist * fb.inv_abs_b_mean * x * x /
-                      (r * std::sqrt(D));
-    if (!std::isfinite(basepref) || basepref < 0)
-      basepref = 0;
+    double pref = (bfield.p + 1) * pi * twist * fb.inv_abs_b_mean * x * x /
+                  (r * std::sqrt(D));
+    if (!std::isfinite(pref) || pref < 0)
+      pref = 0;
     return Geometry{
         .x = x,
         .mu = mu,
         .D = D,
-        .basepref = basepref,
+        .pref = pref,
     };
   }
 
-  // Include the overlap in every stage; geometry supplies only basepref.
   std::array<double, 2> polarized_rates(std::array<double, 2> const &betas,
                                         Geometry const &g, double path) const {
     std::array<double, 2> ret{};
@@ -427,7 +416,7 @@ struct PhotonEvolution {
       double weight = f * t1 * std::sqrt(t1);
       double mu =
           std::clamp((g.mu - betas[i]) / (1 - betas[i] * g.mu), -1.0, 1.0);
-      terms = terms + (g.basepref * weight) *
+      terms = terms + (g.pref * weight) *
                           double3{0.25 * (1 + mu * mu), 0.25 * (mu * mu - 1),
                                   0.5 * pol_options.charge_sign * mu};
     }
@@ -517,8 +506,7 @@ struct PhotonEvolution {
           cuts.push_back(zriddr(
               [&](double x) { return geo(stepper.dense_out(x)).D; }, l, r, 0));
         }
-        for (double beta : knots) {
-          double ginv = std::sqrt((1 - beta) * (1 + beta));
+        for (auto [beta, ginv] : knots) {
           auto bound = [beta, ginv](double x, double mu) {
             return x * ginv + beta * mu - 1;
           };
@@ -561,7 +549,7 @@ struct PhotonEvolution {
                                (1 + g.x) * (1 - g.x), betas))
             return 0.0;
           auto rates = polarized_rates(betas, g, path_length);
-          return (rates[0] + rates[1]) * g.basepref;
+          return (rates[0] + rates[1]) * g.pref;
         };
         bool fast = l >= pol_start && r <= frozen_at &&
                     pol_coeff(std::midpoint(l, r)).kappa * (r - l) > 256 &&
@@ -603,8 +591,7 @@ struct PhotonEvolution {
           scattered_data.beta =
               (ran.U() * sum_rates < rates[0]) ? betas[0] : betas[1];
           if (scattered_point >= pol_start)
-            ++stats.coupled_scatterings;
-          return EvolveResult::Scattered;
+            return EvolveResult::Scattered;
         }
         tau += dtau;
       }
@@ -620,9 +607,7 @@ struct PhotonEvolution {
         escaped_data.muk = std::clamp(k_hat.z, -1.0, 1.0);
         if (pol_stage == PolStage::Mode) {
           stokes = eigenmode(pol_coeff(stepper.y_new));
-          ++stats.escaped_mode;
         } else if (pol_stage == PolStage::Integrating) {
-          ++stats.escaped_active;
         }
         // Output screen: x = projected magnetic axis, y = k cross x.
         // This makes photons with different ray planes directly comparable.
@@ -781,12 +766,6 @@ int main(int argc, char **argv) try {
   std::println(
       stderr, "photons={} escaped={} absorbed={} scatterings={} seconds={:.6f}",
       N, escaped, absorbed, scattered, seconds);
-  auto const &s = pe.stats;
-  std::println(stderr,
-               "pol_starts={} freezes={} accepted={} rejected={} "
-               "coupled_scatterings={} escaped_mode={} escaped_active={}",
-               s.starts, s.freezes, s.accepted, s.rejected,
-               s.coupled_scatterings, s.escaped_mode, s.escaped_active);
   return 0;
 } catch (std::exception const &e) {
   std::println(stderr, "fd11: {}", e.what());
