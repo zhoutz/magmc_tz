@@ -24,9 +24,11 @@ constexpr double B_QED = 4.414005218e13;
 constexpr double hbar_c = 1.973269804e-13; // keV km
 constexpr double birefringence = alpha_em / (30 * pi * B_QED * B_QED * hbar_c);
 using Stokes = double3; // x=Q, y=U, z=V
+enum class CouplingCriterion { FD11, Adiabatic };
 struct Options {
-  // couple is the adiabatic threshold |d chi_B/dl| / kappa.
+  // Threshold for l_A/r (FD11) or |d chi_B/dl|/kappa (Adiabatic).
   double couple = 1e-3, freeze = 1e-3, tolerance = 1e-5;
+  CouplingCriterion coupling_criterion = CouplingCriterion::Adiabatic;
   bool enabled = true;
   int charge_sign = -1; // electrons: lower sign in FD11 (33)
 };
@@ -170,7 +172,7 @@ struct PhotonEvolution {
       auto const &sample = path == stepper.x_old + stepper.h_old
                                ? stepper.y_new
                                : state;
-      return adiabatic_event(sample);
+      return coupling_event(sample);
     });
   }
 
@@ -241,6 +243,13 @@ struct PhotonEvolution {
   }
   double adiabatic_event(YVector const &state) const {
     return std::abs(chi_prime(state)) - pol_options.couple * pol_coeff(state).kappa;
+  }
+  double coupling_event(YVector const &state) const {
+    if (pol_options.coupling_criterion == fd11::CouplingCriterion::FD11)
+      // FD11 (25), (34): l_A/r = 1/(kappa*r) > couple.
+      // Positive on the integrating side, finite even when kappa is zero.
+      return 1 - pol_options.couple * pol_coeff(state).kappa * state[0];
+    return adiabatic_event(state);
   }
   int step_geodesic() {
     // A photon can be emitted/scattered already outside the adiabatic region.
@@ -731,6 +740,13 @@ int main(int argc, char **argv) try {
       options.tolerance = std::stod(value());
     else if (arg == "--couple")
       options.couple = std::stod(value());
+    else if (arg == "--coupling-criterion") {
+      auto criterion = value();
+      if (criterion != "fd11" && criterion != "adiabatic")
+        throw std::invalid_argument("--coupling-criterion: fd11 or adiabatic");
+      options.coupling_criterion = criterion == "fd11"
+          ? fd11::CouplingCriterion::FD11 : fd11::CouplingCriterion::Adiabatic;
+    }
     else if (arg == "--freeze")
       options.freeze = std::stod(value());
     else if (arg == "--no-polarization")
@@ -751,7 +767,8 @@ int main(int argc, char **argv) try {
           "  --photons N (10000) --seed N (7774) --energy keV (1)\n"
           "  --mode E|O (E) --output output/fd11.txt\n"
           "  --pol-tol 1e-5 --couple 1e-3 --freeze 1e-3 (0 disables freezing)\n"
-          "  --couple sets the threshold |d chi_B/dl| / kappa\n"
+          "  --coupling-criterion fd11|adiabatic (adiabatic)\n"
+          "  --couple sets the threshold l_A/r (fd11) or |d chi_B/dl|/kappa (adiabatic)\n"
           "  --charge electron|positron (electron) --no-polarization\n"
           "Output: omega_inf_keV mu_k Q U V; I=1.\n"
           "Screen x=projected magnetic axis, y=k cross x; V=+2 Im(Ax Ay*).");

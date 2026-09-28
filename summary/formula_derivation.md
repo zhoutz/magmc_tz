@@ -1,8 +1,10 @@
 # FD11 偏振演化的完整公式推导
 
-**当前启动判据：** 已依照 `doc/adiabatic.md` 改为 $|d\chi_B/dl|>10^{-3}\kappa$，
-并接入测地线 stepper 的事件。下文第 6.2 节保留 FD11 式 (34) 的历史推导；
-当前实现与新增推导见 [fd11_adiabatic_event.md](fd11_adiabatic_event.md)。Stokes 表示和冻结判据继续沿用。
+**当前启动判据：** 可用 `--coupling-criterion fd11|adiabatic` 选择 FD11 的
+$\ell_A/r>10^{-3}$ 或 `doc/adiabatic.md` 的 $|d\chi_B/dl|>10^{-3}\kappa$，默认 `adiabatic`。
+两者均接入测地线 stepper 的事件。下文第 6.2 节推导 FD11 判据，旧的独立扫描流程仅为历史记录；
+方向导数推导见 [fd11_adiabatic_event.md](fd11_adiabatic_event.md)，
+当前选项、事件公式和性能对照见 [fd11_coupling_criteria.md](fd11_coupling_criteria.md)。Stokes 表示和冻结判据继续沿用。
 
 本文详细记录上一任务中 `src/dev/fd11.cpp` 所使用的公式推导，并逐项说明它们怎样对应到代码。主要依据为仓库中的 [FD11.pdf](../article/FD11.pdf)：Fernández & Davis (2011), *The X-Ray Polarization Signature of Quiescent Magnetars: Effect of Magnetospheric Scattering and Vacuum Polarization*, ApJ 730:131。
 
@@ -630,7 +632,7 @@ d(\varphi_O-\varphi_E)=(\lambda_O-\lambda_E)ds=\kappa ds.
 
 这就是论文式 (25)。它是“一弧度”尺度，不是完整一周的 $2\pi/\kappa$。
 
-### 6.2 把论文式 (34) 改写为求根形式（历史启动判据）
+### 6.2 把论文式 (34) 改写为求根形式（`fd11` 可选判据）
 
 论文选择
 
@@ -655,7 +657,8 @@ F(s)=\eta_{\rm couple}\kappa(s)r(s)-1\le0.
 原实现使用后一个形式，避免显式计算可能发散的 $1/\kappa$。若发射或散射后的初始位置已经满足 $F\le0$，就在该位置开始；否则扫描轨道段并在首次检测到的越界区间内求根。
 
 该历史实现默认扫描每个轨道步四个子区间。当前已移除此启动扫描，改为由测地线事件检测
-$G=|d\chi_B/dl|-\epsilon_{\rm ad}\kappa$ 的过零，默认 $\epsilon_{\rm ad}=10^{-3}$，
+所选条件的过零：`fd11` 使用 $-F=1-\eta_{\rm couple}\kappa r$，`adiabatic` 使用
+$G=|d\chi_B/dl|-\epsilon_{\rm ad}\kappa$。两者均以正号表示积分区域，默认选择后者，阈值均为 $10^{-3}$，
 轨道步上限仍为 $0.1r$。这是有限分辨率事件检测，不是关于所有可能非单调窄穿越的数学保证。
 
 ### 6.3 O 模和 E 模对应的 Stokes 初值
