@@ -27,7 +27,6 @@ using Stokes = double3; // x=Q, y=U, z=V
 struct Options {
   // FD11 (34): threshold for l_A/r.
   double couple = 1e-3, freeze = 1e-3, tolerance = 1e-5;
-  bool enabled = true;
   int charge_sign = -1; // electrons: lower sign in FD11 (33)
 };
 struct Coeff {
@@ -163,13 +162,9 @@ struct PhotonEvolution {
     stepper.add_event(&event_absorb);
     stepper.add_event(&event_escape);
     stepper.add_event([this](double path, YVector const &state) {
-      if (!pol_options.enabled || pol_stage != PolStage::Mode)
+      if (pol_stage != PolStage::Mode)
         return -1.0;
-      // Use exactly the same endpoint state in the sign test and root search.
-      // Dense output can differ from the stored endpoint by an ulp.
-      auto const &sample =
-          path == stepper.x_old + stepper.h_old ? stepper.y_new : state;
-      return coupling_event(sample);
+      return coupling_event(state);
     });
   }
 
@@ -226,7 +221,7 @@ struct PhotonEvolution {
   }
   // Call immediately after emission/scattering initialization, before stepping.
   void set_pol_state() {
-    if (pol_options.enabled && pol_stage == PolStage::Mode &&
+    if (pol_stage == PolStage::Mode &&
         stepper.events[PolarizationEvent].sign >= 0)
       start_polarization(stepper.x_old, stepper.y_old, stepper.h_old);
   }
@@ -299,7 +294,7 @@ struct PhotonEvolution {
   }
   void advance_polarization(double xl, double xr) {
     pol_segments.clear();
-    if (!pol_options.enabled || pol_stage != PolStage::Integrating)
+    if (pol_stage != PolStage::Integrating)
       return;
     double x = xl;
     while (x < xr) {
@@ -388,7 +383,7 @@ struct PhotonEvolution {
     std::array<double, 2> ret{};
     if (g.D <= 0)
       return ret;
-    bool coupled = pol_options.enabled && path >= pol_start;
+    bool coupled = path >= pol_start;
     fd11::Stokes s{};
     fd11::Coeff c{};
     double mode_overlap = 0;
@@ -568,7 +563,7 @@ struct PhotonEvolution {
           auto rates = polarized_rates(betas, g, path_length);
           return (rates[0] + rates[1]) * g.basepref;
         };
-        bool fast = pol_options.enabled && l >= pol_start && r <= frozen_at &&
+        bool fast = l >= pol_start && r <= frozen_at &&
                     pol_coeff(std::midpoint(l, r)).kappa * (r - l) > 256 &&
                     geo(stepper.dense_out(l)).D > 1e-8 &&
                     geo(stepper.dense_out(r)).D > 1e-8;
@@ -719,8 +714,6 @@ int main(int argc, char **argv) try {
       options.couple = std::stod(value());
     else if (arg == "--freeze")
       options.freeze = std::stod(value());
-    else if (arg == "--no-polarization")
-      options.enabled = false;
     else if (arg == "--charge") {
       auto charge = value();
       if (charge != "electron" && charge != "positron")
@@ -738,7 +731,7 @@ int main(int argc, char **argv) try {
           "  --mode E|O (E) --output output/fd11.txt\n"
           "  --pol-tol 1e-5 --couple 1e-3 --freeze 1e-3 (0 disables freezing)\n"
           "  --couple sets the FD11 (34) threshold l_A/r\n"
-          "  --charge electron|positron (electron) --no-polarization\n"
+          "  --charge electron|positron (electron)\n"
           "Output: omega_inf_keV mu_k Q U V; I=1.\n"
           "Screen x=projected magnetic axis, y=k cross x; V=+2 Im(Ax Ay*).");
       return 0;
