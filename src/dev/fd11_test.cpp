@@ -192,9 +192,8 @@ void oscillatory_opacity_test(bool support_boundary) {
   std::println("oscillatory opacity (support_boundary={}): resolved={:.12g} fast={:.12g} error={:.3e}",
                support_boundary, resolved, fast, std::abs(resolved - fast));
 }
-void lifecycle_tests(fd11::CouplingCriterion criterion) {
+void lifecycle_tests() {
   PhotonEvolution pe(bfield, fb, 91);
-  pe.pol_options.coupling_criterion = criterion;
   pe.init({0, 0, 1}, {1, 0, 0}, {0, 1, 0}, 1, Polarization::E, R_star, 0, 0);
   pe.stepper.do_step();
   pe.advance_polarization(0, pe.stepper.h_old);
@@ -217,45 +216,6 @@ void lifecycle_tests(fd11::CouplingCriterion criterion) {
           "Parallel-field degeneracy");
   std::println("lifecycle: delayed start, scattering reset, parallel-field limit passed");
 }
-void adiabatic_event_tests() {
-  PhotonEvolution pe(bfield, fb, 4321);
-  double3 rh{std::sqrt(1-0.3*0.3), 0, 0.3};
-  auto normal = to_unit(double3{-0.3, 0.7, rh.x});
-  auto init = [&](double r) {
-    pe.init(normal, rh, cross(normal, rh), 1, Polarization::E, r, 0, 0.4);
-  };
-  init(180);
-  require(pe.stepper.events.size() == 3 && pe.adiabatic_event(pe.stepper.y_old) < 0,
-          "Adiabatic start must be registered and initially inactive");
-  pe.stepper.do_step(0.01);
-  double mid=pe.stepper.h_old/2, dl=pe.stepper.h_old/4;
-  auto a=pe.screen(pe.stepper.dense_out(mid-dl));
-  auto b=pe.screen(pe.stepper.dense_out(mid+dl));
-  double ax=dot(a.B,a.x), ay=dot(a.B,a.y), bx=dot(b.B,b.x), by=dot(b.B,b.y);
-  double reference=std::atan2(ax*by-ay*bx, ax*bx+ay*by)/(2*dl);
-  double computed=pe.chi_prime(pe.stepper.dense_out(mid));
-  require(std::abs(reference-computed)<1e-6*std::abs(reference)+1e-12,
-          "chi_B derivative must match the physical angle, including its factor of two");
-  // Already nonadiabatic at emission: advance_polarization still cannot start it.
-  init(5000);
-  require(pe.adiabatic_event(pe.stepper.y_old)>0, "Initially nonadiabatic fixture");
-  int event=pe.step_geodesic();
-  require(event==PhotonEvolution::PolarizationEvent && pe.stepper.h_old==0,
-          "Initial nonadiabatic state must yield an event at the initial point");
-  pe.advance_polarization(0,0);
-  require(pe.pol_stage==PhotonEvolution::PolStage::Mode && pe.stats.starts==0,
-          "Only the transport event handler may start polarization");
-  init(5000);
-  require(pe.evolve_geodesic()==PhotonEvolution::EvolveResult::Escaped &&
-              pe.pol_start==0 && pe.stats.starts==1,
-          "Transport must consume the initial event exactly once");
-  pe.pol_options.enabled=false;
-  init(5000);
-  require(pe.evolve_geodesic()==PhotonEvolution::EvolveResult::Escaped &&
-              !std::isfinite(pe.pol_start) && pe.stats.starts==1,
-          "Disabled polarization must never fire a start event");
-  std::println("adiabatic events: derivative, registration, immediate start and disabling passed");
-}
 void coupling_criterion_tests() {
   PhotonEvolution pe(bfield, fb, 4321);
   double3 rh{std::sqrt(1-0.3*0.3), 0, 0.3};
@@ -263,66 +223,57 @@ void coupling_criterion_tests() {
   auto init = [&](double r) {
     pe.init(normal, rh, cross(normal, rh), 1, Polarization::E, r, 0, 0.4);
   };
-  for (auto criterion : {fd11::CouplingCriterion::FD11,
-                         fd11::CouplingCriterion::Adiabatic}) {
-    pe.pol_options.coupling_criterion = criterion;
-    pe.pol_options.enabled = true;
+  pe.pol_options.enabled = true;
+  init(180);
+  double kappa = pe.pol_coeff(pe.stepper.y_old).kappa;
+  double ratio = 1 / (kappa * 180);
+  require(ratio > 0, "Nondegenerate coupling fixture");
+  for (double factor : {0.5, 2.0}) {
+    pe.pol_options.couple = factor * ratio;
     init(180);
-    double kappa = pe.pol_coeff(pe.stepper.y_old).kappa;
-    double ratio = criterion == fd11::CouplingCriterion::FD11
-        ? 1 / (kappa * 180) : std::abs(pe.chi_prime(pe.stepper.y_old)) / kappa;
-    require(ratio > 0, "Nondegenerate coupling fixture");
-    for (double factor : {0.5, 2.0}) {
-      pe.pol_options.couple = factor * ratio;
-      init(180);
-      require(pe.stepper.events[PhotonEvolution::PolarizationEvent].sign ==
-                  (factor < 1 ? 1 : -1),
-              "Selected criterion and adjustable threshold must set event sign");
-    }
-    pe.pol_options.couple = 1e-3;
-    init(180);
-    require(pe.coupling_event(pe.stepper.y_old) < 0,
-            "Delayed-start fixture must be below both thresholds");
-    int event = -1;
-    for (int i = 0; i < 1000; ++i) {
-      event = pe.step_geodesic();
-      if (event >= 0) break;
-      pe.stepper.update_old();
-    }
-    require(event == PhotonEvolution::PolarizationEvent && pe.stepper.x_old > 0,
-            "Both criteria must locate a delayed geodesic event");
-    auto state = pe.stepper.y_new;
-    kappa = pe.pol_coeff(state).kappa;
-    ratio = criterion == fd11::CouplingCriterion::FD11
-        ? 1 / (kappa * state[0]) : std::abs(pe.chi_prime(state)) / kappa;
-    require(std::abs(ratio / pe.pol_options.couple - 1) < 1e-6,
-            "Event root must satisfy the selected physical ratio");
-    pe.start_polarization();
-    require(pe.stepper.events[PhotonEvolution::PolarizationEvent].sign == -1,
-            "Start event must be disarmed");
-    init(5000);
-    auto starts = pe.stats.starts;
-    require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped &&
-                pe.pol_start == 0 && pe.stats.starts == starts + 1,
-            "Both criteria must consume an initially satisfied event once");
-    pe.pol_options.enabled = false;
-    init(5000);
-    require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped &&
-                !std::isfinite(pe.pol_start) && pe.stats.starts == starts + 1,
-            "Disabled polarization must ignore either criterion");
+    require(pe.stepper.events[PhotonEvolution::PolarizationEvent].sign ==
+                (factor < 1 ? 1 : -1),
+            "FD11 criterion and adjustable threshold must set event sign");
   }
-  pe.pol_options.coupling_criterion = fd11::CouplingCriterion::FD11;
+  pe.pol_options.couple = 1e-3;
+  init(180);
+  require(pe.coupling_event(pe.stepper.y_old) < 0,
+          "Delayed-start fixture must be below the FD11 threshold");
+  int event = -1;
+  for (int i = 0; i < 1000; ++i) {
+    event = pe.step_geodesic();
+    if (event >= 0) break;
+    pe.stepper.update_old();
+  }
+  require(event == PhotonEvolution::PolarizationEvent && pe.stepper.x_old > 0,
+          "The FD11 criterion must locate a delayed geodesic event");
+  auto state = pe.stepper.y_new;
+  kappa = pe.pol_coeff(state).kappa;
+  ratio = 1 / (kappa * state[0]);
+  require(std::abs(ratio / pe.pol_options.couple - 1) < 1e-6,
+          "Event root must satisfy the FD11 physical ratio");
+  pe.start_polarization();
+  require(pe.stepper.events[PhotonEvolution::PolarizationEvent].sign == -1,
+          "Start event must be disarmed");
+  init(5000);
+  auto starts = pe.stats.starts;
+  require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped &&
+              pe.pol_start == 0 && pe.stats.starts == starts + 1,
+          "The FD11 criterion must consume an initially satisfied event once");
+  pe.pol_options.enabled = false;
+  init(5000);
+  require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped &&
+              !std::isfinite(pe.pol_start) && pe.stats.starts == starts + 1,
+          "Disabled polarization must ignore the coupling criterion");
   pe.init({0, 1, 0}, {0, 0, 1}, {1, 0, 0}, 1, Polarization::E, 100, 0, 0);
   require(pe.pol_coeff(pe.stepper.y_old).kappa == 0 &&
               pe.coupling_event(pe.stepper.y_old) == 1,
           "FD11 event must stay finite at zero birefringence");
-  std::println("coupling criteria: threshold, delayed/initial events, disabling and zero kappa passed");
+  std::println("FD11 coupling: threshold, delayed/initial events, disabling and zero kappa passed");
 }
 RayResult ray(double alpha, Polarization mode, double tol, double couple,
-              double freeze, bool check_reference, double latitude = 0.3,
-              fd11::CouplingCriterion criterion = fd11::CouplingCriterion::Adiabatic) {
+              double freeze, bool check_reference, double latitude = 0.3) {
   PhotonEvolution pe(bfield, fb, 4321);
-  pe.pol_options.coupling_criterion = criterion;
   pe.pol_options.tolerance = tol;
   pe.pol_options.couple = couple;
   pe.pol_options.freeze = freeze;
@@ -351,8 +302,7 @@ RayResult ray(double alpha, Polarization mode, double tol, double couple,
       start_r = state[0];
       auto cc = pe.pol_coeff(l);
       double trigger = pe.coupling_event(state);
-      double event_tolerance = criterion == fd11::CouplingCriterion::FD11
-          ? 1e-7 : 1e-7 * couple * cc.kappa + 1e-13 / start_r;
+      double event_tolerance = 1e-7;
       require(std::abs(trigger) < event_tolerance ||
               (pe.pol_start == 0 && trigger >= 0),
               "Coupling event root accuracy: " + std::to_string(trigger));
@@ -385,9 +335,7 @@ RayResult ray(double alpha, Polarization mode, double tol, double couple,
   }
   if (!started) pe.stokes = pe.eigenmode(pe.pol_coeff(pe.stepper.y_new));
   require(std::abs(pe.stokes.length() - 1) < 1e-10, "Polarization norm");
-  // The new start surface changes the phase accumulated near k parallel B.
-  // Check both the default accumulated error and a much tighter independent
-  // Jones comparison, rather than reusing the old surface's error bound.
+  // Check accumulated Stokes error against an independent Jones integration.
   if (check_reference) require(max_error < (tol <= 1e-6 ? 2e-5 : 1e-3),
       std::format("Ray Jones reference error: alpha={} tolerance={} error={}", alpha, tol, max_error));
   return {pe.stokes, start_r, freeze_r, max_error, pe.stats.accepted};
@@ -398,22 +346,13 @@ int main() try {
   polarized_rate_tests();
   oscillatory_opacity_test(false);
   oscillatory_opacity_test(true);
-  lifecycle_tests(fd11::CouplingCriterion::FD11);
-  lifecycle_tests(fd11::CouplingCriterion::Adiabatic);
-  adiabatic_event_tests();
+  lifecycle_tests();
   coupling_criterion_tests();
-  for (double a : {0.4, 1.0, 1.8}) {
-    auto result = ray(a, Polarization::E, 1e-8, 1e-3, 1e-3, true, 0.3,
-                      fd11::CouplingCriterion::FD11);
-    require(result.start_r > 0, "FD11 ray must start integrating");
-    std::println("FD11 event ray alpha={} start_km={:.6f} Jones_error={:.3e}",
-                 a, result.start_r, result.max_error);
-  }
   for (auto mode : {Polarization::E, Polarization::O}) {
     auto radial = ray(0, mode, 1e-6, 1e-3, 1e-3, true);
     require(std::abs(radial.s.z) < 1e-10, "Radial mode must not develop V");
-    require(radial.start_r == 0 && radial.steps == 0,
-            "Constant projected-field direction must remain in Mode");
+    require(radial.start_r > 0 && radial.steps > 0,
+            "Constant projected-field direction must still cross the FD11 threshold");
   }
   for (double a : {0.4, 1.0, 1.8}) {
     auto base = ray(a, Polarization::E, 1e-5, 1e-3, 1e-3, true);
@@ -421,7 +360,7 @@ int main() try {
     auto deeper = ray(a, Polarization::E, 1e-8, 1e-5, 1e-3, false);
     auto unfrozen = ray(a, Polarization::E, 1e-8, 1e-3, 0, false);
     auto ordinary = ray(a, Polarization::O, 1e-8, 1e-3, 1e-3, false);
-    require(base.start_r > 0, "Nonradial ray must cross the adiabatic threshold");
+    require(base.start_r > 0, "Nonradial ray must cross the FD11 threshold");
     double conv = (base.s + (-1.0) * tight.s).length();
     double deep = (tight.s + (-1.0) * deeper.s).length();
     double residual = (tight.s + (-1.0) * unfrozen.s).length();
@@ -429,7 +368,7 @@ int main() try {
                  a, base.start_r, base.freeze_r, base.steps, base.max_error,
                  tight.max_error, conv, deep, residual, base.s.z);
     require(conv < 1e-3 && residual < 1e-3, "Trajectory convergence");
-    // The adiabatic threshold fixes an approximate eigenmode start surface. Moving it is a
+    // The FD11 threshold fixes an approximate eigenmode start surface. Moving it is a
     // physical approximation sensitivity test, not an ODE error tolerance;
     // near k parallel B it need not converge at the paper's generic rate.
     require(std::isfinite(deep), "Non-finite coupling-surface sensitivity");

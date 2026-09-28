@@ -24,11 +24,9 @@ constexpr double B_QED = 4.414005218e13;
 constexpr double hbar_c = 1.973269804e-13; // keV km
 constexpr double birefringence = alpha_em / (30 * pi * B_QED * B_QED * hbar_c);
 using Stokes = double3; // x=Q, y=U, z=V
-enum class CouplingCriterion { FD11, Adiabatic };
 struct Options {
-  // Threshold for l_A/r (FD11) or |d chi_B/dl|/kappa (Adiabatic).
+  // FD11 (34): threshold for l_A/r.
   double couple = 1e-3, freeze = 1e-3, tolerance = 1e-5;
-  CouplingCriterion coupling_criterion = CouplingCriterion::Adiabatic;
   bool enabled = true;
   int charge_sign = -1; // electrons: lower sign in FD11 (33)
 };
@@ -168,7 +166,7 @@ struct PhotonEvolution {
       if (!pol_options.enabled || pol_stage != PolStage::Mode)
         return -1.0;
       // Use exactly the same endpoint state in the sign test and root search.
-      // Dense output can differ by an ulp, amplified by the angle derivative.
+      // Dense output can differ from the stored endpoint by an ulp.
       auto const &sample =
           path == stepper.x_old + stepper.h_old ? stepper.y_new : state;
       return coupling_event(sample);
@@ -221,38 +219,13 @@ struct PhotonEvolution {
   fd11::Coeff pol_coeff(double path) const {
     return pol_coeff(stepper.dense_out(path));
   }
-  double chi_prime(YVector const &state) const {
-    // Differentiate along the local geodesic tangent. This also works at
-    // emission, before the stepper has prepared any dense output.
-    YVector tangent, before = state, after = state;
-    geodesic(0, state, tangent);
-    double dl = 1e-5 * state[0];
-    for (int i = 0; i < 3; ++i) {
-      before[i] -= dl * tangent[i];
-      after[i] += dl * tangent[i];
-    }
-    auto a = pol_coeff(before), b = pol_coeff(after);
-    // c,s describe 2 chi_B; the sample separation is 2 dl.
-    double angle = std::atan2(a.c * b.s - a.s * b.c, a.c * b.c + a.s * b.s);
-    // Unresolved angular roundoff must not become a spurious coupling event
-    // when kappa is extremely small. This applies to every ray geometry.
-    if (std::abs(angle) <= 16 * std::numeric_limits<double>::epsilon())
-      return 0;
-    return angle / (4 * dl);
-  }
-  double adiabatic_event(YVector const &state) const {
-    return std::abs(chi_prime(state)) -
-           pol_options.couple * pol_coeff(state).kappa;
-  }
   double coupling_event(YVector const &state) const {
-    if (pol_options.coupling_criterion == fd11::CouplingCriterion::FD11)
-      // FD11 (25), (34): l_A/r = 1/(kappa*r) > couple.
-      // Positive on the integrating side, finite even when kappa is zero.
-      return 1 - pol_options.couple * pol_coeff(state).kappa * state[0];
-    return adiabatic_event(state);
+    // FD11 (25), (34): l_A/r = 1/(kappa*r) > couple.
+    // Positive on the integrating side, finite even when kappa is zero.
+    return 1 - pol_options.couple * pol_coeff(state).kappa * state[0];
   }
   int step_geodesic() {
-    // A photon can be emitted/scattered already outside the adiabatic region.
+    // A photon can be emitted/scattered already beyond the FD11 coupling threshold.
     // Deliver a zero-length event at its initial point through the same
     // event-handling path as an ordinary crossing.
     bool start_here = pol_options.enabled && pol_stage == PolStage::Mode &&
@@ -747,14 +720,7 @@ int main(int argc, char **argv) try {
       options.tolerance = std::stod(value());
     else if (arg == "--couple")
       options.couple = std::stod(value());
-    else if (arg == "--coupling-criterion") {
-      auto criterion = value();
-      if (criterion != "fd11" && criterion != "adiabatic")
-        throw std::invalid_argument("--coupling-criterion: fd11 or adiabatic");
-      options.coupling_criterion = criterion == "fd11"
-                                       ? fd11::CouplingCriterion::FD11
-                                       : fd11::CouplingCriterion::Adiabatic;
-    } else if (arg == "--freeze")
+    else if (arg == "--freeze")
       options.freeze = std::stod(value());
     else if (arg == "--no-polarization")
       options.enabled = false;
@@ -774,9 +740,7 @@ int main(int argc, char **argv) try {
           "  --photons N (10000) --seed N (7774) --energy keV (1)\n"
           "  --mode E|O (E) --output output/fd11.txt\n"
           "  --pol-tol 1e-5 --couple 1e-3 --freeze 1e-3 (0 disables freezing)\n"
-          "  --coupling-criterion fd11|adiabatic (adiabatic)\n"
-          "  --couple sets the threshold l_A/r (fd11) or |d chi_B/dl|/kappa "
-          "(adiabatic)\n"
+          "  --couple sets the FD11 (34) threshold l_A/r\n"
           "  --charge electron|positron (electron) --no-polarization\n"
           "Output: omega_inf_keV mu_k Q U V; I=1.\n"
           "Screen x=projected magnetic axis, y=k cross x; V=+2 Im(Ax Ay*).");
