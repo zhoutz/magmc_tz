@@ -25,6 +25,7 @@ constexpr double hbar_c = 1.973269804e-13; // keV km
 constexpr double birefringence = alpha_em / (30 * pi * B_QED * B_QED * hbar_c);
 using Stokes = double3; // x=Q, y=U, z=V
 struct Options {
+  // couple is the adiabatic threshold |d chi_B/dl| / kappa.
   double couple = 1e-3, freeze = 1e-3, tolerance = 1e-5;
   bool enabled = true;
   int charge_sign = -1; // electrons: lower sign in FD11 (33)
@@ -102,6 +103,7 @@ using YVector = std::array<double, 3>;
 enum class Polarization { O, E };
 
 struct PhotonEvolution {
+  enum GeodesicEvent { AbsorbEvent, EscapeEvent, PolarizationEvent };
   static void geodesic(double, YVector const &y, YVector &dydx) {
     auto [r, psi, alpha] = y;
     double L = std::sqrt(1 - rs / r);
@@ -160,6 +162,16 @@ struct PhotonEvolution {
         quad_rtol(quad_rtol) {
     stepper.add_event(&event_absorb);
     stepper.add_event(&event_escape);
+    stepper.add_event([this](double path, YVector const &state) {
+      if (!pol_options.enabled || pol_stage != PolStage::Mode)
+        return -1.0;
+      // Use exactly the same endpoint state in the sign test and root search.
+      // Dense output can differ by an ulp, amplified by the angle derivative.
+      auto const &sample = path == stepper.x_old + stepper.h_old
+                               ? stepper.y_new
+                               : state;
+      return adiabatic_event(sample);
+    });
   }
 
   void init(double3 _n, double3 _e1, double3 _e2, double _omega_inf,
@@ -207,6 +219,52 @@ struct PhotonEvolution {
   }
   fd11::Coeff pol_coeff(double path) const {
     return pol_coeff(stepper.dense_out(path));
+  }
+  double chi_prime(YVector const &state) const {
+    // Differentiate along the local geodesic tangent. This also works at
+    // emission, before the stepper has prepared any dense output.
+    YVector tangent, before = state, after = state;
+    geodesic(0, state, tangent);
+    double dl = 1e-5 * state[0];
+    for (int i = 0; i < 3; ++i) {
+      before[i] -= dl * tangent[i];
+      after[i] += dl * tangent[i];
+    }
+    auto a = pol_coeff(before), b = pol_coeff(after);
+    // c,s describe 2 chi_B; the sample separation is 2 dl.
+    double angle = std::atan2(a.c * b.s - a.s * b.c, a.c * b.c + a.s * b.s);
+    // Unresolved angular roundoff must not become a spurious coupling event
+    // when kappa is extremely small. This applies to every ray geometry.
+    if (std::abs(angle) <= 16 * std::numeric_limits<double>::epsilon())
+      return 0;
+    return angle / (4 * dl);
+  }
+  double adiabatic_event(YVector const &state) const {
+    return std::abs(chi_prime(state)) - pol_options.couple * pol_coeff(state).kappa;
+  }
+  int step_geodesic() {
+    // A photon can be emitted/scattered already outside the adiabatic region.
+    // Deliver a zero-length event at its initial point through the same
+    // event-handling path as an ordinary crossing.
+    bool start_here = pol_options.enabled && pol_stage == PolStage::Mode &&
+                      stepper.events[PolarizationEvent].sign >= 0;
+    stepper.do_step(0.1 * stepper.y_old[0]);
+    if (!start_here)
+      return stepper.detect_event();
+    stepper.y_new = stepper.y_old;
+    stepper.dydx_new = stepper.dydx_old;
+    stepper.h_old = 0;
+    return PolarizationEvent;
+  }
+  void start_polarization() {
+    pol_start = stepper.x_old + stepper.h_old;
+    stokes = eigenmode(pol_coeff(stepper.y_new));
+    pol_stage = PolStage::Integrating;
+    pol_h = stepper.h_new;
+    ++stats.starts;
+    // The event callback now returns -1. Reset its cached sign as well,
+    // so disabling it cannot create a spurious crossing on the next step.
+    stepper.events[PolarizationEvent].sign = -1;
   }
   fd11::Stokes eigenmode(fd11::Coeff c) const {
     double sign = pol == Polarization::O ? 1 : -1;
@@ -263,35 +321,9 @@ struct PhotonEvolution {
   }
   void advance_polarization(double xl, double xr) {
     pol_segments.clear();
-    if (!pol_options.enabled || pol_stage == PolStage::Frozen)
+    if (!pol_options.enabled || pol_stage != PolStage::Integrating)
       return;
     double x = xl;
-    if (pol_stage == PolStage::Mode) {
-      // Locate (34), including photons emitted/scattered beyond the surface.
-      auto threshold = [&](double s) {
-        return pol_coeff(s).kappa * stepper.dense_out(s)[0] *
-                   pol_options.couple -
-               1;
-      };
-      double left = xl, fl = threshold(left);
-      bool found = fl <= 0;
-      for (int j = 1; !found && j <= n_scan; ++j) {
-        double right = xl + (xr - xl) * j / n_scan;
-        double fr = threshold(right);
-        if (fr <= 0) {
-          x = zriddr(threshold, left, right, orbit_atol);
-          found = true;
-        }
-        left = right;
-      }
-      if (!found)
-        return;
-      pol_start = x;
-      stokes = eigenmode(pol_coeff(x));
-      pol_stage = PolStage::Integrating;
-      ++stats.starts;
-      pol_h = xr - x;
-    }
     while (x < xr) {
       double h = std::min(pol_h > 0 ? pol_h : xr - x, xr - x);
       if (x + h == x)
@@ -320,8 +352,8 @@ struct PhotonEvolution {
       x += h;
       // FD11 (35), including its common phase. The weak-phase guard avoids
       // false freezing when a large phase happens to wrap through 2 pi.
-      if (change < pol_options.freeze &&
-          pol_coeff(x).kappa * end[0] < 1 && std::cos(end[2]) > 0) {
+      if (change < pol_options.freeze && pol_coeff(x).kappa * end[0] < 1 &&
+          std::cos(end[2]) > 0) {
         pol_stage = PolStage::Frozen;
         frozen_at = x;
         ++stats.freezes;
@@ -375,7 +407,7 @@ struct PhotonEvolution {
 
   // Include the overlap in every stage; geometry supplies only basepref.
   std::array<double, 2> polarized_rates(std::array<double, 2> const &betas,
-                                       Geometry const &g, double path) const {
+                                        Geometry const &g, double path) const {
     std::array<double, 2> ret{};
     if (g.D <= 0)
       return ret;
@@ -397,8 +429,7 @@ struct PhotonEvolution {
       double t1 = (1 + beta) * (1 - beta);
       double overlap = mode_overlap;
       if (coupled) {
-        double mup =
-            std::clamp((g.mu - beta) / (1 - beta * g.mu), -1.0, 1.0);
+        double mup = std::clamp((g.mu - beta) / (1 - beta * g.mu), -1.0, 1.0);
         overlap = fd11::overlap(s, c, mup, pol_options.charge_sign);
       }
       ret[i] = f * t1 * std::sqrt(t1) * overlap;
@@ -472,11 +503,10 @@ struct PhotonEvolution {
                     boundary(left, left + inset) -
                     boundary(right, right - inset);
     if (result < -quad_atol)
-      throw std::runtime_error(
-          std::format("Negative oscillatory optical depth: value={} "
-                      "interval=[{},{}] kappa={} terms={}",
-                      result, left, right, pol_coeff(left).kappa,
-                      opacity_terms(left).x));
+      throw std::runtime_error(std::format(
+          "Negative oscillatory optical depth: value={} "
+          "interval=[{},{}] kappa={} terms={}",
+          result, left, right, pol_coeff(left).kappa, opacity_terms(left).x));
     return std::max(0.0, result);
   }
 
@@ -497,20 +527,17 @@ struct PhotonEvolution {
     std::vector<double> cuts;
 
     while (true) {
-      stepper.do_step(0.1 * stepper.y_old[0]);
-      int event_id = stepper.detect_event();
+      int event_id = step_geodesic();
 
       double xl = stepper.x_old, xr = stepper.x_old + stepper.h_old;
       advance_polarization(xl, xr);
       cuts.clear(), cuts.push_back(xl), cuts.push_back(xr);
-      if (pol_start > xl && pol_start < xr)
-        cuts.push_back(pol_start);
       if (frozen_at > xl && frozen_at < xr)
         cuts.push_back(frozen_at);
       double l = xl;
       auto gl = geo(stepper.dense_out(l));
       bool resonant = gl.D > 0;
-      for (int i = 1; i <= n_scan; ++i) {
+      for (int i = 1; xl < xr && i <= n_scan; ++i) {
         double r = xl + (xr - xl) * i / n_scan;
         auto gr = geo(stepper.dense_out(r));
         resonant = resonant || gr.D > 0;
@@ -556,11 +583,10 @@ struct PhotonEvolution {
           auto rates = polarized_rates(betas, g, path_length);
           return (rates[0] + rates[1]) * g.basepref;
         };
-        bool fast =
-            pol_options.enabled && l >= pol_start && r <= frozen_at &&
-            pol_coeff(std::midpoint(l, r)).kappa * (r - l) > 256 &&
-            geo(stepper.dense_out(l)).D > 1e-8 &&
-            geo(stepper.dense_out(r)).D > 1e-8;
+        bool fast = pol_options.enabled && l >= pol_start && r <= frozen_at &&
+                    pol_coeff(std::midpoint(l, r)).kappa * (r - l) > 256 &&
+                    geo(stepper.dense_out(l)).D > 1e-8 &&
+                    geo(stepper.dense_out(r)).D > 1e-8;
         auto optical_depth = [&](double a, double b) {
           return fast && pol_coeff(std::midpoint(a, b)).kappa * (b - a) > 256
                      ? fast_optical_depth(a, b)
@@ -603,9 +629,9 @@ struct PhotonEvolution {
         tau += dtau;
       }
 
-      if (event_id == 0) {
+      if (event_id == AbsorbEvent) {
         return EvolveResult::Absorbed;
-      } else if (event_id == 1) {
+      } else if (event_id == EscapeEvent) {
         auto [r, psi, alpha] = stepper.y_new;
         double3 r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
         double3 psi_hat = cross(n, r_hat);
@@ -630,6 +656,8 @@ struct PhotonEvolution {
         escaped_data.U = -s2 * stokes.x + c2 * stokes.y;
         escaped_data.V = stokes.z;
         return EvolveResult::Escaped;
+      } else if (event_id == PolarizationEvent) {
+        start_polarization();
       }
       stepper.update_old();
     }
@@ -723,6 +751,7 @@ int main(int argc, char **argv) try {
           "  --photons N (10000) --seed N (7774) --energy keV (1)\n"
           "  --mode E|O (E) --output output/fd11.txt\n"
           "  --pol-tol 1e-5 --couple 1e-3 --freeze 1e-3 (0 disables freezing)\n"
+          "  --couple sets the threshold |d chi_B/dl| / kappa\n"
           "  --charge electron|positron (electron) --no-polarization\n"
           "Output: omega_inf_keV mu_k Q U V; I=1.\n"
           "Screen x=projected magnetic axis, y=k cross x; V=+2 Im(Ax Ay*).");

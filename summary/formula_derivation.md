@@ -1,5 +1,9 @@
 # FD11 偏振演化的完整公式推导
 
+**当前启动判据：** 已依照 `doc/adiabatic.md` 改为 $|d\chi_B/dl|>10^{-3}\kappa$，
+并接入测地线 stepper 的事件。下文第 6.2 节保留 FD11 式 (34) 的历史推导；
+当前实现与新增推导见 [fd11_adiabatic_event.md](fd11_adiabatic_event.md)。Stokes 表示和冻结判据继续沿用。
+
 本文详细记录上一任务中 `src/dev/fd11.cpp` 所使用的公式推导，并逐项说明它们怎样对应到代码。主要依据为仓库中的 [FD11.pdf](../article/FD11.pdf)：Fernández & Davis (2011), *The X-Ray Polarization Signature of Quiescent Magnetars: Effect of Magnetospheric Scattering and Vacuum Polarization*, ApJ 730:131。
 
 原任务的实现和验证记录见 [fd11.md](fd11.md)。本文侧重推导，不把已验证的数值结果当作数学证明，也不把程序采用的数值保护条件误称为论文原公式。
@@ -626,7 +630,7 @@ d(\varphi_O-\varphi_E)=(\lambda_O-\lambda_E)ds=\kappa ds.
 
 这就是论文式 (25)。它是“一弧度”尺度，不是完整一周的 $2\pi/\kappa$。
 
-### 6.2 把论文式 (34) 改写为程序适合求根的形式
+### 6.2 把论文式 (34) 改写为求根形式（历史启动判据）
 
 论文选择
 
@@ -648,9 +652,11 @@ d(\varphi_O-\varphi_E)=(\lambda_O-\lambda_E)ds=\kappa ds.
 F(s)=\eta_{\rm couple}\kappa(s)r(s)-1\le0.
 \]
 
-程序使用后一个形式，避免显式计算可能发散的 $1/\kappa$。若发射或散射后的初始位置已经满足 $F\le0$，就在该位置开始；否则扫描轨道段并在首次检测到的越界区间内求根。
+原实现使用后一个形式，避免显式计算可能发散的 $1/\kappa$。若发射或散射后的初始位置已经满足 $F\le0$，就在该位置开始；否则扫描轨道段并在首次检测到的越界区间内求根。
 
-默认扫描为每个轨道步四个子区间，轨道步上限为 $0.1r$。这是有限分辨率事件检测，不是关于所有可能非单调窄穿越的数学保证。
+该历史实现默认扫描每个轨道步四个子区间。当前已移除此启动扫描，改为由测地线事件检测
+$G=|d\chi_B/dl|-\epsilon_{\rm ad}\kappa$ 的过零，默认 $\epsilon_{\rm ad}=10^{-3}$，
+轨道步上限仍为 $0.1r$。这是有限分辨率事件检测，不是关于所有可能非单调窄穿越的数学保证。
 
 ### 6.3 O 模和 E 模对应的 Stokes 初值
 
@@ -2498,7 +2504,7 @@ V=2(x_Iy_R-x_Ry_I)
 |---|---|---|
 | 真空传播矩阵、$\kappa$、双倍角 | `pol_coeff()` | FD11 (18)–(24) 的弱场一阶展开 |
 | 三个 Stokes 方程、叉乘生成元 | `fd11::Coeff::omega()` | 由 FD11 (36)–(39) 严格代数变换 |
-| 式 (34) 启动、O/E 初值 | `advance_polarization()`、`eigenmode()` | 论文阈值及本征向量转换 |
+| 绝热判据启动、O/E 初值 | `adiabatic_event()`、`step_geodesic()`、`evolve_geodesic()`、`start_polarization()`、`eigenmode()` | `doc/adiabatic.md` 的事件判据及本征向量转换 |
 | 转动磁场基底 | `pol_step()` | 对同一 Stokes ODE 的坐标变换 |
 | 旋转和四元数合成 | `Rotation`、`compose()` | 长度守恒传播算符的实数表示 |
 | 四阶指数步 | `fd11::magnus()` | 数值积分选择，不是 FD11 原文算法 |

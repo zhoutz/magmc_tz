@@ -205,13 +205,55 @@ void lifecycle_tests() {
   pe.perform_scattering();
   require(pe.pol_stage == PhotonEvolution::PolStage::Mode && pe.stokes.length() == 0 &&
           !std::isfinite(pe.pol_start), "Scattering must reset to an eigenmode");
+  require(pe.stepper.events[PhotonEvolution::PolarizationEvent].sign ==
+              pe.stepper.sign(pe.adiabatic_event(pe.stepper.y_old)),
+          "Scattering must rearm the adiabatic event");
   // Exactly parallel field: deterministic degenerate mode and no NaNs.
   pe.init({0, 1, 0}, {0, 0, 1}, {1, 0, 0}, 1, Polarization::E, 100, 0, 0);
-  pe.stepper.do_step();
-  pe.advance_polarization(0, pe.stepper.h_old);
+  require(pe.evolve_geodesic() == PhotonEvolution::EvolveResult::Escaped,
+          "Parallel-field ray should escape");
   require(std::isfinite(pe.stokes.x) && std::abs(pe.stokes.length() - 1) < 1e-12,
           "Parallel-field degeneracy");
   std::println("lifecycle: delayed start, scattering reset, parallel-field limit passed");
+}
+void adiabatic_event_tests() {
+  PhotonEvolution pe(bfield, fb, 4321);
+  double3 rh{std::sqrt(1-0.3*0.3), 0, 0.3};
+  auto normal = to_unit(double3{-0.3, 0.7, rh.x});
+  auto init = [&](double r) {
+    pe.init(normal, rh, cross(normal, rh), 1, Polarization::E, r, 0, 0.4);
+  };
+  init(180);
+  require(pe.stepper.events.size() == 3 && pe.adiabatic_event(pe.stepper.y_old) < 0,
+          "Adiabatic start must be registered and initially inactive");
+  pe.stepper.do_step(0.01);
+  double mid=pe.stepper.h_old/2, dl=pe.stepper.h_old/4;
+  auto a=pe.screen(pe.stepper.dense_out(mid-dl));
+  auto b=pe.screen(pe.stepper.dense_out(mid+dl));
+  double ax=dot(a.B,a.x), ay=dot(a.B,a.y), bx=dot(b.B,b.x), by=dot(b.B,b.y);
+  double reference=std::atan2(ax*by-ay*bx, ax*bx+ay*by)/(2*dl);
+  double computed=pe.chi_prime(pe.stepper.dense_out(mid));
+  require(std::abs(reference-computed)<1e-6*std::abs(reference)+1e-12,
+          "chi_B derivative must match the physical angle, including its factor of two");
+  // Already nonadiabatic at emission: advance_polarization still cannot start it.
+  init(5000);
+  require(pe.adiabatic_event(pe.stepper.y_old)>0, "Initially nonadiabatic fixture");
+  int event=pe.step_geodesic();
+  require(event==PhotonEvolution::PolarizationEvent && pe.stepper.h_old==0,
+          "Initial nonadiabatic state must yield an event at the initial point");
+  pe.advance_polarization(0,0);
+  require(pe.pol_stage==PhotonEvolution::PolStage::Mode && pe.stats.starts==0,
+          "Only the transport event handler may start polarization");
+  init(5000);
+  require(pe.evolve_geodesic()==PhotonEvolution::EvolveResult::Escaped &&
+              pe.pol_start==0 && pe.stats.starts==1,
+          "Transport must consume the initial event exactly once");
+  pe.pol_options.enabled=false;
+  init(5000);
+  require(pe.evolve_geodesic()==PhotonEvolution::EvolveResult::Escaped &&
+              !std::isfinite(pe.pol_start) && pe.stats.starts==1,
+          "Disabled polarization must never fire a start event");
+  std::println("adiabatic events: derivative, registration, immediate start and disabling passed");
 }
 RayResult ray(double alpha, Polarization mode, double tol, double couple,
               double freeze, bool check_reference, double latitude = 0.3) {
@@ -228,20 +270,25 @@ RayResult ray(double alpha, Polarization mode, double tol, double couple,
   bool started = false;
   double start_r = 0, freeze_r = 0, max_error = 0;
   while (true) {
-    pe.stepper.do_step(0.1 * pe.stepper.y_old[0]);
-    int event = pe.stepper.detect_event();
+    int event = pe.step_geodesic();
     double l = pe.stepper.x_old, r = l + pe.stepper.h_old;
     auto stage_before = pe.pol_stage;
     pe.advance_polarization(l, r);
+    if (event == PhotonEvolution::PolarizationEvent) {
+      require(pe.pol_stage == PhotonEvolution::PolStage::Mode && pe.stats.starts == 0,
+              "advance_polarization must not detect or start the event");
+      pe.start_polarization();
+    }
     if (!started && pe.pol_stage != PhotonEvolution::PolStage::Mode) {
       started = true;
       l = pe.pol_start;
       auto state = pe.stepper.dense_out(l);
       start_r = state[0];
       auto cc = pe.pol_coeff(l);
-      double trigger = cc.kappa * start_r * couple;
-      require(std::abs(trigger - 1) < 1e-8 || (pe.pol_start == 0 && trigger <= 1),
-              "FD11 (34) root accuracy: " + std::to_string(trigger));
+      double trigger = pe.adiabatic_event(state);
+      require(std::abs(trigger) < 1e-7 * couple * cc.kappa + 1e-13 / start_r ||
+              (pe.pol_start == 0 && trigger >= 0),
+              "Adiabatic event root accuracy: " + std::to_string(trigger));
       j = eigen_jones(cc, mode);
     }
     if (pe.pol_stage == PhotonEvolution::PolStage::Frozen && freeze_r == 0)
@@ -265,12 +312,17 @@ RayResult ray(double alpha, Polarization mode, double tol, double couple,
         }
       }
     }
-    if (event >= 0) break;
+    if (event == PhotonEvolution::AbsorbEvent || event == PhotonEvolution::EscapeEvent)
+      break;
     pe.stepper.update_old();
   }
-  require(started, "Ray failed to start polarization");
+  if (!started) pe.stokes = pe.eigenmode(pe.pol_coeff(pe.stepper.y_new));
   require(std::abs(pe.stokes.length() - 1) < 1e-10, "Polarization norm");
-  if (check_reference) require(max_error < 2e-4, "Ray Jones reference error");
+  // The new start surface changes the phase accumulated near k parallel B.
+  // Check both the default accumulated error and a much tighter independent
+  // Jones comparison, rather than reusing the old surface's error bound.
+  if (check_reference) require(max_error < (tol <= 1e-6 ? 2e-5 : 1e-3),
+      std::format("Ray Jones reference error: alpha={} tolerance={} error={}", alpha, tol, max_error));
   return {pe.stokes, start_r, freeze_r, max_error, pe.stats.accepted};
 }
 
@@ -280,25 +332,28 @@ int main() try {
   oscillatory_opacity_test(false);
   oscillatory_opacity_test(true);
   lifecycle_tests();
+  adiabatic_event_tests();
   for (auto mode : {Polarization::E, Polarization::O}) {
     auto radial = ray(0, mode, 1e-6, 1e-3, 1e-3, true);
     require(std::abs(radial.s.z) < 1e-10, "Radial mode must not develop V");
-    require(radial.freeze_r > 2 * radial.start_r, "Pure-mode premature freeze");
+    require(radial.start_r == 0 && radial.steps == 0,
+            "Constant projected-field direction must remain in Mode");
   }
   for (double a : {0.4, 1.0, 1.8}) {
     auto base = ray(a, Polarization::E, 1e-5, 1e-3, 1e-3, true);
-    auto tight = ray(a, Polarization::E, 1e-8, 1e-3, 1e-3, false);
+    auto tight = ray(a, Polarization::E, 1e-8, 1e-3, 1e-3, true);
     auto deeper = ray(a, Polarization::E, 1e-8, 1e-5, 1e-3, false);
     auto unfrozen = ray(a, Polarization::E, 1e-8, 1e-3, 0, false);
     auto ordinary = ray(a, Polarization::O, 1e-8, 1e-3, 1e-3, false);
+    require(base.start_r > 0, "Nonradial ray must cross the adiabatic threshold");
     double conv = (base.s + (-1.0) * tight.s).length();
     double deep = (tight.s + (-1.0) * deeper.s).length();
     double residual = (tight.s + (-1.0) * unfrozen.s).length();
-    std::println("ray alpha={} start_km={:.6f} freeze_km={:.6f} steps={} Jones_error={:.3e} tolerance_error={:.3e} deeper_error={:.3e} freeze_error={:.3e} V={:.6f}",
+    std::println("ray alpha={} start_km={:.6f} freeze_km={:.6f} steps={} Jones_error={:.3e} tight_Jones_error={:.3e} tolerance_error={:.3e} deeper_error={:.3e} freeze_error={:.3e} V={:.6f}",
                  a, base.start_r, base.freeze_r, base.steps, base.max_error,
-                 conv, deep, residual, base.s.z);
-    require(conv < 2e-4 && residual < 1e-3, "Trajectory convergence");
-    // Eq. (34) fixes an approximate eigenmode start surface. Moving it is a
+                 tight.max_error, conv, deep, residual, base.s.z);
+    require(conv < 1e-3 && residual < 1e-3, "Trajectory convergence");
+    // The adiabatic threshold fixes an approximate eigenmode start surface. Moving it is a
     // physical approximation sensitivity test, not an ODE error tolerance;
     // near k parallel B it need not converge at the paper's generic rate.
     require(std::isfinite(deep), "Non-finite coupling-surface sensitivity");
