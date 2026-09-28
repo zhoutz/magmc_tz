@@ -338,7 +338,7 @@ struct PhotonEvolution {
   }
 
   struct Geometry {
-    double x, mu, D, pref, basepref;
+    double x, mu, D, basepref;
   };
 
   Geometry geo(YVector const &y) const {
@@ -360,13 +360,7 @@ struct PhotonEvolution {
             std::sin(alpha) * (b.y * dot(n, phi_hat) - b.z * dot(n, theta_hat)),
         -1.0, 1.0);
     double D = std::fma(x, x, (mu - 1) * (mu + 1));
-    double overlap = (pol == Polarization::E) ? (0.5) : (0.5 * D / (x * x));
     double twist = bfield.Bphi_over_Btheta(muz);
-    double pref = (bfield.p + 1) * pi * twist * fb.inv_abs_b_mean * x * x *
-                  overlap / (r * std::sqrt(D));
-    if (!std::isfinite(pref) || pref < 0) {
-      pref = 0;
-    }
     double basepref = (bfield.p + 1) * pi * twist * fb.inv_abs_b_mean * x * x /
                       (r * std::sqrt(D));
     if (!std::isfinite(basepref) || basepref < 0)
@@ -375,37 +369,39 @@ struct PhotonEvolution {
         .x = x,
         .mu = mu,
         .D = D,
-        .pref = pref,
         .basepref = basepref,
     };
   }
 
-  // Preserve the original pure-mode opacity exactly. Only the coupling
-  // region needs the charge-dependent, beta-dependent overlap of FD11 (33).
-  auto polarized_rates(std::array<double, 2> const &betas, Geometry const &g,
-                       double path) const {
-    auto ret = rate(betas);
-    if (!pol_options.enabled || path < pol_start)
-      return ret;
-    auto s = polarization_at(path);
-    auto c = pol_coeff(path);
-    for (int i = 0; i < 2; ++i) {
-      double mup =
-          std::clamp((g.mu - betas[i]) / (1 - betas[i] * g.mu), -1.0, 1.0);
-      ret[i] *= fd11::overlap(s, c, mup, pol_options.charge_sign);
-    }
-    return ret;
-  }
-
-  std::array<double, 2> rate(std::array<double, 2> const &betas) const {
+  // Include the overlap in every stage; geometry supplies only basepref.
+  std::array<double, 2> polarized_rates(std::array<double, 2> const &betas,
+                                       Geometry const &g, double path) const {
     std::array<double, 2> ret{};
+    if (g.D <= 0)
+      return ret;
+    bool coupled = pol_options.enabled && path >= pol_start;
+    fd11::Stokes s{};
+    fd11::Coeff c{};
+    double mode_overlap = 0;
+    if (coupled) {
+      s = polarization_at(path);
+      c = pol_coeff(path);
+    } else {
+      mode_overlap = pol == Polarization::E ? 0.5 : 0.5 * g.D / (g.x * g.x);
+    }
     for (int i = 0; i < 2; ++i) {
       double beta = betas[i];
       double f = fb.f(beta);
       if (f == 0)
         continue;
       double t1 = (1 + beta) * (1 - beta);
-      ret[i] = f * t1 * std::sqrt(t1);
+      double overlap = mode_overlap;
+      if (coupled) {
+        double mup =
+            std::clamp((g.mu - beta) / (1 - beta * g.mu), -1.0, 1.0);
+        overlap = fd11::overlap(s, c, mup, pol_options.charge_sign);
+      }
+      ret[i] = f * t1 * std::sqrt(t1) * overlap;
     }
     return ret;
   }
@@ -417,12 +413,18 @@ struct PhotonEvolution {
     if (g.D <= 0 || !solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu,
                                      (1 + g.x) * (1 - g.x), betas))
       return {0, 0, 0};
-    auto rates = rate(betas);
     double3 terms{0, 0, 0};
     for (int i = 0; i < 2; ++i) {
+      // IBP needs the coefficients of I, Q_B and V separately, before
+      // contracting with a particular Stokes state.
+      double f = fb.f(betas[i]);
+      if (f == 0)
+        continue;
+      double t1 = (1 + betas[i]) * (1 - betas[i]);
+      double weight = f * t1 * std::sqrt(t1);
       double mu =
           std::clamp((g.mu - betas[i]) / (1 - betas[i] * g.mu), -1.0, 1.0);
-      terms = terms + (g.basepref * rates[i]) *
+      terms = terms + (g.basepref * weight) *
                           double3{0.25 * (1 + mu * mu), 0.25 * (mu * mu - 1),
                                   0.5 * pol_options.charge_sign * mu};
     }
@@ -552,10 +554,7 @@ struct PhotonEvolution {
                                (1 + g.x) * (1 - g.x), betas))
             return 0.0;
           auto rates = polarized_rates(betas, g, path_length);
-          double pref = pol_options.enabled && path_length >= pol_start
-                            ? g.basepref
-                            : g.pref;
-          return (rates[0] + rates[1]) * pref;
+          return (rates[0] + rates[1]) * g.basepref;
         };
         bool fast =
             pol_options.enabled && l >= pol_start && r <= frozen_at &&
@@ -671,12 +670,6 @@ struct PhotonEvolution {
     Polarization pol_out = (ran.U() < 1 / (1 + mup_out * mup_out))
                                ? Polarization::E
                                : Polarization::O;
-
-    if (!std::isfinite(omega_inf_out)) {
-      throw std::runtime_error(
-          "Non-finite omega_inf encountered after scattering");
-    }
-
     init(n_out, e1_out, e2_out, omega_inf_out, pol_out, r, 0, alpha_out);
   }
 };

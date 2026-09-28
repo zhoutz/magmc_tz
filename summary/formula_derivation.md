@@ -1149,11 +1149,14 @@ W_E={1\over4}[(1+\nu^2)-(\nu^2-1)]={1\over2}.
 ={\xi^2\over\sqrt D}(1-\beta^2)^{3/2}.
 \]
 
-这给出代码 `rate()` 中的权重
+这给出粒子分布和共振 Jacobian 合并后的权重
 
 \[
 R_i=f(\beta_i)(1-\beta_i^2)^{3/2}.
 \]
+
+当前代码已删除独立的 `rate()` 函数。`polarized_rates()` 在同一循环中计算此权重，
+乘上当前偏振状态的重叠因子后返回 $R_iW_{\sigma,i}$。
 
 ### 9.4 空间前因子与完整光学深度
 
@@ -1182,6 +1185,12 @@ R_i=f(\beta_i)(1-\beta_i^2)^{3/2}.
 \[
 \boxed{{d\tau\over ds}=\mathcal P(s)\sum_i R_i(s)W_{\sigma,i}(s).}
 \]
+
+`Geometry` 只保存不含重叠因子的 `basepref`，不再另存 `pref`。
+偏振 ODE 启动前或关闭偏振演化时，`polarized_rates()` 使用纯模式重叠
+$W_E=1/2$、$W_O=D/(2\xi^2)$；启动后使用 Stokes 重叠表达式。
+因此所有阶段的直接光学深度计算均为 `basepref * (rates[0] + rates[1])`。
+`opacity_terms()` 为分部积分分别计算下面的三个线性系数，不提前乘入具体 Stokes 状态的重叠。
 
 沿用 km 作为 r 的单位时，整个几何前因子就是 km$^{-1}$，与 ds 的单位匹配。
 

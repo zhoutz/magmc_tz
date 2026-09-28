@@ -101,6 +101,65 @@ void algebra_tests() {
 }
 
 struct RayResult { fd11::Stokes s; double start_r, freeze_r, max_error; long steps; };
+void polarized_rate_tests() {
+  PhotonEvolution pe(bfield, fb, 123);
+  auto bs = bfield.calc_B(45, 0);
+  auto tangent = to_unit(double3{0, -bs.z, bs.y});
+  pe.init(cross(double3{1, 0, 0}, tangent), {1, 0, 0}, tangent,
+          24, Polarization::E, 45, 0, 1.3);
+  pe.stepper.do_step(1e-4);
+  auto g = pe.geo(pe.stepper.dense_out(0));
+  auto c = pe.pol_coeff(0);
+  std::array<double, 2> betas;
+  require(g.D > 0 && solve_quadratic(g.x*g.x+g.mu*g.mu, -2*g.mu,
+                                    (1+g.x)*(1-g.x), betas),
+          "Rate fixture must be resonant");
+  auto check_jones = [&](Jones j) {
+    auto rates = pe.polarized_rates(betas, g, 0);
+    double phi = 0.5 * std::atan2(c.s, c.c);
+    Complex ax(j[0], j[1]), ay(j[2], j[3]);
+    Complex abx = std::cos(phi)*ax + std::sin(phi)*ay;
+    Complex aby = -std::sin(phi)*ax + std::cos(phi)*ay;
+    for (int i=0; i<2; ++i) {
+      double beta = betas[i], mup = (g.mu-beta)/(1-beta*g.mu);
+      double expected = fb.f(beta)*std::pow(1-beta*beta, 1.5)*0.5*
+          std::norm(mup*abx + Complex(0, pe.pol_options.charge_sign)*aby);
+      require(std::abs(rates[i]-expected) < 1e-13*std::max(1.0, expected),
+              "Polarized rate must include the FD11 overlap exactly once");
+    }
+    require(rates[0]+rates[1] > 0, "Rate fixture must have nonzero weight");
+    return rates;
+  };
+  for (auto mode : {Polarization::E, Polarization::O}) {
+    pe.pol = mode;
+    pe.pol_options.enabled = true;
+    pe.pol_start = std::numeric_limits<double>::infinity();
+    check_jones(eigen_jones(c, mode)); // only O/E stored before ODE start
+    pe.pol_start = 0;
+    pe.pol_options.enabled = false;
+    check_jones(eigen_jones(c, mode)); // disabled ODE must still include overlap
+  }
+  pe.pol_options.enabled = true;
+  pe.pol_stage = PhotonEvolution::PolStage::Frozen;
+  pe.frozen_at = 0;
+  Jones mixed{0.6, 0, 0, 0.8};
+  pe.stokes = to_stokes(mixed);
+  for (int sign : {-1, 1}) {
+    pe.pol_options.charge_sign = sign;
+    auto rates = check_jones(mixed);
+    auto terms = pe.opacity_terms(0);
+    double expanded = terms.x + terms.y*(c.c*pe.stokes.x+c.s*pe.stokes.y)
+                      + terms.z*pe.stokes.z;
+    double direct = g.basepref*(rates[0]+rates[1]);
+    require(std::abs(expanded-direct) < 1e-13*std::max(1.0, direct),
+            "IBP coefficients and direct opacity must agree");
+  }
+  auto unsupported = pe.polarized_rates({-1, 0}, g, 0);
+  require(unsupported[0] == 0 && unsupported[1] == 0,
+          "Distribution support endpoints must have zero rate");
+  std::println("rates: O/E, disabled ODE, mixed Stokes, both charges and IBP normalization passed");
+}
+
 void oscillatory_opacity_test(bool support_boundary) {
   PhotonEvolution pe(bfield, fb, 123);
   pe.pol_options.tolerance = 1e-8;
@@ -217,6 +276,7 @@ RayResult ray(double alpha, Polarization mode, double tol, double couple,
 
 int main() try {
   algebra_tests();
+  polarized_rate_tests();
   oscillatory_opacity_test(false);
   oscillatory_opacity_test(true);
   lifecycle_tests();
