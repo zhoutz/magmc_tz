@@ -10,6 +10,7 @@ struct Boltzmann {
   double b0, exp_k1, a;
   double b_min, b_max, b_mean, inv_abs_b_mean;
   std::vector<double> knots;
+  std::vector<double> ginvs;
 
   Boltzmann(double b0, int n_knots) : b0(b0) {
     if (!std::isfinite(b0) || std::abs(b0) >= 1 || b0 == 0) {
@@ -24,8 +25,11 @@ struct Boltzmann {
     }
 
     knots.resize(n_knots);
+    ginvs.resize(n_knots);
     for (int i = 0; i < n_knots; ++i) {
-      knots[i] = b_min + (b_max - b_min) * i / (n_knots - 1);
+      double beta = b_min + (b_max - b_min) * i / (n_knots - 1);
+      knots[i] = beta;
+      ginvs[i] = std::sqrt((1 - beta) * (1 + beta));
     }
 
     double s0 = std::sqrt((1 - b0) * (1 + b0));
