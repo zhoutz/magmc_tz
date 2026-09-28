@@ -183,31 +183,36 @@ struct PhotonEvolution {
   }
 
   struct Screen {
-    double3 r, k, x, y, B;
+    double3 x, y, B;
   };
   Screen screen(YVector const &state) const {
     auto [r, psi, alpha] = state;
-    auto rh = std::cos(psi) * e1 + std::sin(psi) * e2;
-    auto ph = cross(n, rh);
-    auto kh = std::cos(alpha) * rh + std::sin(alpha) * ph;
+    auto r_hat = std::cos(psi) * e1 + std::sin(psi) * e2;
+    auto psi_hat = cross(n, r_hat);
+    auto k_hat = std::cos(alpha) * r_hat + std::sin(alpha) * psi_hat;
     // The ray-plane normal and n x k form a parallel-transported screen
     // in Schwarzschild spacetime; x cross y = k. No artificial basis spin.
-    auto xh = cross(n, kh);
-    double mu = std::clamp(rh.z, -1.0, 1.0), rho = std::hypot(rh.x, rh.y);
-    auto th = rho > 0 ? double3{rh.x * mu / rho, rh.y * mu / rho, -rho}
-                      : double3{std::copysign(1.0, mu), 0, 0};
-    auto az = rho > 0 ? double3{-rh.y / rho, rh.x / rho, 0} : double3{0, 1, 0};
-    auto bf = bfield.calc_B(r, mu);
-    return {rh, kh, xh, n, bf.x * rh + bf.y * th + bf.z * az};
+    auto x_hat = cross(n, k_hat);
+    auto y_hat = n;
+    double mu = std::clamp(r_hat.z, -1.0, 1.0),
+           rho = std::hypot(r_hat.x, r_hat.y);
+    auto theta_hat = rho > 0
+                         ? double3{r_hat.x * mu / rho, r_hat.y * mu / rho, -rho}
+                         : double3{std::copysign(1.0, mu), 0, 0};
+    auto phi_hat =
+        rho > 0 ? double3{-r_hat.y / rho, r_hat.x / rho, 0} : double3{0, 1, 0};
+    auto B_vec = bfield.calc_B(r, mu);
+    return {x_hat, y_hat,
+            B_vec.x * r_hat + B_vec.y * theta_hat + B_vec.z * phi_hat};
   }
   fd11::Coeff pol_coeff(YVector const &state) const {
     auto f = screen(state);
-    double bx = dot(f.B, f.x), by = dot(f.B, f.y), bt2 = bx * bx + by * by;
+    double Bx = dot(f.B, f.x), By = dot(f.B, f.y), Bt2 = Bx * Bx + By * By;
     double kappa =
-        fd11::birefringence * omega_inf / std::sqrt(1 - rs / state[0]) * bt2;
-    if (bt2 == 0)
+        fd11::birefringence * omega_inf / std::sqrt(1 - rs / state[0]) * Bt2;
+    if (Bt2 == 0)
       return {0, 1, 0}; // degenerate eigenmode: deterministic screen
-    return {kappa, (bx * bx - by * by) / bt2, 2 * bx * by / bt2};
+    return {kappa, (Bx * Bx - By * By) / Bt2, 2 * Bx * By / Bt2};
   }
   fd11::Coeff pol_coeff(double path) const {
     return pol_coeff(stepper.dense_out(path));
@@ -219,17 +224,11 @@ struct PhotonEvolution {
         stepper.events[PolarizationEvent].sign >= 0)
       start_polarization(stepper.x_old, stepper.y_old, stepper.h_old);
   }
-  int step_geodesic() {
-    stepper.do_step(0.1 * stepper.y_old[0]);
-    return stepper.detect_event();
-  }
   void start_polarization(double path, YVector const &state, double initial_h) {
     pol_start = path;
     stokes = eigenmode(pol_coeff(state));
     pol_stage = PolStage::Integrating;
     pol_h = initial_h;
-    // The event callback now returns -1. Reset its cached sign as well,
-    // so disabling it cannot create a spurious crossing on the next step.
     stepper.events[PolarizationEvent].sign = -1;
   }
   fd11::Stokes eigenmode(fd11::Coeff c) const {
@@ -272,7 +271,7 @@ struct PhotonEvolution {
                     begin.s * v.x + begin.c * v.y, v.z};
     return p;
   }
-  fd11::Stokes polarization_at(double path) const {
+  fd11::Stokes stokes_at(double path) const {
     if (path < pol_start)
       return eigenmode(pol_coeff(path));
     if (path >= frozen_at)
@@ -305,9 +304,9 @@ struct PhotonEvolution {
               : std::clamp(0.9 * std::pow(pol_options.tolerance / error, 0.2),
                            0.2, 3.0);
       pol_h = h * factor;
-      if (error > pol_options.tolerance) {
+      if (error > pol_options.tolerance)
         continue;
-      }
+
       pol_segments.push_back({x, x + h / 2, stokes});
       pol_segments.push_back({x + h / 2, x + h, first.apply(stokes)});
       auto end = stepper.dense_out(x + h);
@@ -377,7 +376,7 @@ struct PhotonEvolution {
     fd11::Coeff c{};
     double mode_overlap = 0;
     if (coupled) {
-      s = polarization_at(path);
+      s = stokes_at(path);
       c = pol_coeff(path);
     } else {
       mode_overlap = pol == Polarization::E ? 0.5 : 0.5 * g.D / (g.x * g.x);
@@ -414,11 +413,12 @@ struct PhotonEvolution {
         continue;
       double t1 = (1 + betas[i]) * (1 - betas[i]);
       double weight = f * t1 * std::sqrt(t1);
-      double mu =
+      double mup =
           std::clamp((g.mu - betas[i]) / (1 - betas[i] * g.mu), -1.0, 1.0);
-      terms = terms + (g.pref * weight) *
-                          double3{0.25 * (1 + mu * mu), 0.25 * (mu * mu - 1),
-                                  0.5 * pol_options.charge_sign * mu};
+      terms =
+          terms + (g.pref * weight) *
+                      double3{0.25 * (1 + mup * mup), 0.25 * (mup * mup - 1),
+                              0.5 * pol_options.charge_sign * mup};
     }
     return terms;
   }
@@ -433,7 +433,7 @@ struct PhotonEvolution {
                                     std::max(1.0, right));
     auto boundary = [&](double x, double interior) {
       auto c = pol_coeff(x);
-      auto s = polarization_at(x);
+      auto s = stokes_at(x);
       double ub = -c.s * s.x + c.c * s.y;
       // The Boltzmann distribution has a finite jump at beta=0. Quadrature
       // cuts already isolate it; endpoint coefficients must use the limit
@@ -442,7 +442,7 @@ struct PhotonEvolution {
     };
     auto integrand = [&](double x) {
       auto c = pol_coeff(x);
-      auto s = polarization_at(x);
+      auto s = stokes_at(x);
       double qb = c.c * s.x + c.s * s.y, ub = -c.s * s.x + c.c * s.y;
       auto terms = opacity_terms(x);
       // Centered finite differences of slowly varying coefficients, with a
@@ -488,7 +488,8 @@ struct PhotonEvolution {
     std::vector<double> cuts;
 
     while (true) {
-      int event_id = step_geodesic();
+      stepper.do_step(0.1 * stepper.y_old[0]);
+      int event_id = stepper.detect_event();
 
       double xl = stepper.x_old, xr = stepper.x_old + stepper.h_old;
       advance_polarization(xl, xr);
@@ -542,7 +543,7 @@ struct PhotonEvolution {
         if (fb.f(betas[0]) == 0 && fb.f(betas[1]) == 0)
           continue;
 
-        auto integrand = [&](double path_length) {
+        auto dtau_dl = [&](double path_length) {
           auto g = geo(stepper.dense_out(path_length));
           std::array<double, 2> betas;
           if (!solve_quadratic(g.x * g.x + g.mu * g.mu, -2 * g.mu,
@@ -558,7 +559,7 @@ struct PhotonEvolution {
         auto optical_depth = [&](double a, double b) {
           return fast && pol_coeff(std::midpoint(a, b)).kappa * (b - a) > 256
                      ? fast_optical_depth(a, b)
-                     : quad.qags(integrand, a, b, quad_atol, quad_rtol);
+                     : quad.qags(dtau_dl, a, b, quad_atol, quad_rtol);
         };
         double dtau = optical_depth(l, r);
 
@@ -570,7 +571,7 @@ struct PhotonEvolution {
                 return tau;
               return tau + optical_depth(l, r);
             };
-            auto const &dfunc = integrand;
+            auto const &dfunc = dtau_dl;
             scattered_point = rtsafe(func, dfunc, l, r, orbit_atol);
           }
 
